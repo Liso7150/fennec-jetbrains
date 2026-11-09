@@ -1,0 +1,52 @@
+<idea-plugin>
+  <id>desktop.colibri.ide</id>
+  <name>Colibri Code</name>
+  <version>1.0.0</version>
+  <vendor>Colibri Desktop</vendor>
+
+  <description><![CDATA[
+    <p>A coding agent inside the IDE, backed by a Colibri model running on this machine.</p>
+    <p>The plugin talks to the local Colibri engine over its OpenAI-compatible endpoint, so nothing
+    leaves the computer. It can start the engine for you, stream answers into a tool window, and
+    explain, fix or test whatever you have selected.</p>
+  ]]></description>
+
+  <depends>com.intellij.modules.platform</depends>
+
+  <idea-version since-build="263" until-build="263.*"/>
+
+  <extensions defaultExtensionNs="com.intellij">
+    <toolWindow id="Colibri"
+                anchor="right"
+                icon="AllIcons.Actions.RunAll"
+                factoryClass="colibri.plugin.ColibriToolWindowFactory"/>
+    <applicationConfigurable id="colibri.settings"
+                             displayName="Colibri Code"
+                             instance="colibri.plugin.ColibriConfigurable"/>
+    <applicationService serviceImplementation="colibri.plugin.ColibriSettings"/>
+    <postStartupActivity implementation="colibri.plugin.ColibriStartupActivity"/>
+  </extensions>
+
+  <actions>
+    <action id="Colibri.ExplainSelection"
+            class="colibri.plugin.ColibriSelectionAction"
+            text="Colibri: Explain selection"
+            description="Ask the local Colibri model to explain the selected code">
+      <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+      <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt E"/>
+    </action>
+    <action id="Colibri.FixSelection"
+            class="colibri.plugin.ColibriFixAction"
+            text="Colibri: Fix / improve selection"
+            description="Ask the local Colibri model for an improved version of the selection">
+      <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+      <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt F"/>
+    </action>
+    <action id="Colibri.WriteTests"
+            class="colibri.plugin.ColibriTestAction"
+            text="Colibri: Write tests for selection"
+            description="Ask the local Colibri model for tests covering the selection">
+      <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+    </action>
+  </actions>
+</idea-plugin>
