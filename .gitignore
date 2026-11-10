@@ -4,6 +4,7 @@ __pycache__/
 node_modules/
 dist/
 release/
+build/
 .venv/
 *.log
 .DS_Store
