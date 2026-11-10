@@ -48,8 +48,9 @@ final class AirAgentRegistrar {
 
     private static final String AGENT_ID = "fennec";
     private static final String INSTALL_KEY = "acp.registry." + AGENT_ID;
-    // Pre-rebrand releases published under this key; leaving it behind shows a second, dead card.
-    private static final String LEGACY_INSTALL_KEY = "acp.registry.colibri";
+    // Pre-rebrand releases published under these; leaving them behind shows a second, dead card.
+    private static final String LEGACY_AGENT_ID = "colibri";
+    private static final String LEGACY_INSTALL_KEY = "acp.registry." + LEGACY_AGENT_ID;
     private static final String AGENT_NAME = "Fennec Desktop";
     private static final String REPOSITORY = "https://github.com/Liso7150/fennec-jetbrains";
     private static final String AIR_PLUGIN_ID = "com.intellij.air";
@@ -160,7 +161,8 @@ final class AirAgentRegistrar {
             for (JsonElement item : base.getAsJsonArray("agents")) {
                 if (!item.isJsonObject()) continue;
                 JsonObject object = item.getAsJsonObject();
-                if (!AGENT_ID.equals(string(object.get("id")))) merged.add(object);
+                String id = string(object.get("id"));
+                if (!AGENT_ID.equals(id) && !LEGACY_AGENT_ID.equals(id)) merged.add(object);
             }
         }
         merged.add(agent);
