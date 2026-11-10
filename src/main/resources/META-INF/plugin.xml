@@ -1,15 +1,17 @@
 <idea-plugin>
   <id>desktop.colibri.ide</id>
   <name>Colibri Code</name>
-  <version>1.3.0</version>
+  <version>1.3.1</version>
   <vendor>Colibri Desktop</vendor>
 
   <description><![CDATA[
-    <p>Adds Colibri to JetBrains Air as a local agent, backed by a model running on this machine.</p>
-    <p>There is no Colibri tool window: pick <b>Colibri</b> in Air's agent menu. The plugin installs a
-    managed ACP bridge and keeps <code>~/.jetbrains/acp.json</code> pointing at it. The engine starts
-    on the first prompt, not when Air opens, and stops after it has been idle, so an open IDE costs
-    no model memory. An engine that was already running is attached to and left alone.</p>
+    <p>Adds <b>Colibri Code</b> to JetBrains Air as an installed agent card, backed by a model running
+    on this machine.</p>
+    <p>The plugin installs a managed ACP bridge, publishes Colibri through Air's agent registry, and
+    registers its local launch command in Air's installed overlay. The card can be enabled, disabled
+    and removed from Air's Agents page like any other agent. The engine starts on the first prompt,
+    not when Air opens, and stops after it has been idle, so an open IDE costs no model memory. An
+    engine that was already running is attached to and left alone.</p>
   ]]></description>
 
   <depends>com.intellij.modules.platform</depends>
