@@ -94,12 +94,22 @@ public class ColibriChatPanel extends JPanel implements Disposable {
             long ticket = ++statusGeneration;
             startButton.setEnabled(false);
             status.setText("checking engine…");
+            status.setForeground(JBColor.foreground());
             ApplicationManager.getApplication().executeOnPooledThread(() -> {
-                EngineLauncher.start(text -> SwingUtilities.invokeLater(() -> {
+                boolean ready = EngineLauncher.ensureRunning(text -> SwingUtilities.invokeLater(() -> {
                     if (disposed || project.isDisposed() || ticket != statusGeneration) return;
                     status.setText(text);
-                    startButton.setEnabled(true);
                 }));
+                SwingUtilities.invokeLater(() -> {
+                    if (disposed || project.isDisposed() || ticket != statusGeneration) return;
+                    if (!ready) {
+                        status.setText("engine did not start — check Settings → Colibri Code");
+                        status.setForeground(new JBColor(new Color(0xa4462f), new Color(0xe07a63)));
+                        startButton.setEnabled(true);
+                        return;
+                    }
+                    refreshStatus();
+                });
             });
         });
         stopButton.setEnabled(false);
@@ -181,9 +191,29 @@ public class ColibriChatPanel extends JPanel implements Disposable {
         sendButton.setEnabled(false);
         stopButton.setEnabled(true);
         ++statusGeneration;
-        status.setText("thinking…");
+        status.setText("starting engine…");
+        status.setForeground(JBColor.foreground());
         long request = ++generation;
 
+        // On-demand engine: a plain message brings the local server up first.
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            boolean ready = EngineLauncher.ensureRunning(message -> SwingUtilities.invokeLater(() -> {
+                if (disposed || project.isDisposed() || !streaming || request != generation) return;
+                status.setText(message);
+            }));
+            SwingUtilities.invokeLater(() -> {
+                if (disposed || project.isDisposed() || !streaming || request != generation) return;
+                if (!ready) {
+                    finish("engine is not available — check Settings → Colibri Code");
+                    return;
+                }
+                status.setText("thinking…");
+                startStream(cfg, messages, request);
+            });
+        });
+    }
+
+    private void startStream(ColibriSettings.State cfg, List<JsonObject> messages, long request) {
         activeStream = ColibriClient.streamChat(cfg.engineUrl, cfg.modelId, messages,
                 cfg.temperature, cfg.maxTokens, cfg.apiKey, new ColibriClient.Callback() {
                     @Override

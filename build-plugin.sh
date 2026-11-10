@@ -51,7 +51,7 @@ Install with: Settings -> Plugins -> gear -> Install Plugin from Disk.
 NOTE
 cp "$OUT/plugin-zip-note.txt" "$DIST/README.txt"
 
-VERSION="1.0.0"
+VERSION="$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' "$HERE/src/main/resources/META-INF/plugin.xml" | head -n1)"
 ZIP="$OUT/ColibriCode-plugin-$VERSION.zip"
 ( cd "$OUT" && "$JAR" --create --file "$ZIP" -C "$OUT" colibri-code )
 

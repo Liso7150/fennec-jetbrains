@@ -3,12 +3,12 @@
 A dependency-free [Colibri](https://github.com/JustVugg/colibri) plugin for
 JetBrains IDEs: a right-side SSE chat tool window plus editor actions
 **Explain / Fix / Write Tests** (Ctrl+Alt+E / F). Talks to the engine's
-OpenAI-compatible server; optional engine auto-start.
+OpenAI-compatible server and starts it locally on demand.
 
 ## Build
 
 ```bash
-./build-plugin.sh    # compiles against the IDE JBR, outputs build/ColibriCode-plugin-1.0.0.zip
+./build-plugin.sh    # compiles against the IDE JBR, outputs build/ColibriCode-plugin-1.1.0.zip
 ```
 
 Install the zip via *Settings → Plugins → ⚙ → Install Plugin from Disk*.
@@ -25,12 +25,25 @@ from `COLIBRI_API_KEY` (local bearer by default).
 Each project gets its own tool window; Stop cancels the in-flight stream in
 that project only.
 
+## Engine lifecycle
+
+The engine is local and on demand. The first message in a tool window starts
+`coli serve` on the configured loopback URL when nothing is listening; the
+status line follows model loading, and the Start engine button does the same
+by hand. If the plugin spawned that process, it is stopped (with children)
+when the IDE closes. An engine that was already running — started by the
+desktop app or your own shell — is attached to and left running. Every
+model, cache and log file stays on this machine; the plugin never contacts a
+remote service.
+
 ## ACP bridge (JetBrains Air)
 
-Colibri also runs inside JetBrains Air as an ACP agent via Qwen Code: point
-`~/.jetbrains/acp.json` at the Qwen Code CLI with `OPENAI_BASE_URL` set to the
-Colibri server and `OPENAI_MODEL` to your model id. See the
-[environment setup](https://github.com/Liso7150/colibri-environment-setup).
+Colibri runs inside JetBrains Air as an ACP agent through the on-demand bridge
+in [`air/`](air/README.md). The bridge starts the local engine when the first
+prompt arrives, launches Qwen Code (or any ACP agent) with `OPENAI_*` pointed at
+it, and stops the engine it started when the session ends. Configure
+`~/.jetbrains/acp.json` once with your absolute paths; the bridge reads the
+shared `~/.colibri/config.json` for the engine URL and model.
 
 ## Credits
 

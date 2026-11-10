@@ -10,14 +10,13 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * Starts the Colibri engine for the plugin when the IDE opens it.
- *
- * Uses the same launcher and serve flags as the rest of the suite, and only for
- * a local http endpoint. The child is left running when the IDE closes: the
- * desktop app may be using it too, and Colibri keeps its warm tier on purpose.
+ * Runs the Colibri engine on demand: started for the first request, stopped
+ * when the IDE closes if this plugin owns the process. An engine that was
+ * already running (desktop app, user shell) is attached to, never stopped.
  */
 public final class EngineLauncher {
 
+    private static final long STARTUP_TIMEOUT_MS = 15 * 60 * 1000L;
     private static volatile Process process;
 
     private EngineLauncher() {}
@@ -84,6 +83,70 @@ public final class EngineLauncher {
         } catch (IOException | RuntimeException e) {
             report(status, "could not start the engine: " + e.getMessage());
             return false;
+        }
+    }
+
+    /** Attach when healthy, otherwise start and wait until the endpoint answers. */
+    public static synchronized boolean ensureRunning(@Nullable Consumer<String> status) {
+        ColibriSettings.State cfg;
+        try {
+            cfg = ColibriSettings.getInstance().effectiveState();
+        } catch (RuntimeException e) {
+            report(status, "cannot read Colibri settings: " + e.getMessage());
+            return false;
+        }
+        if (ColibriClient.isHealthy(cfg.engineUrl, cfg.apiKey)) {
+            report(status, "engine ready");
+            return true;
+        }
+        if (process == null || !process.isAlive()) {
+            if (!start(status)) return false;
+        } else {
+            report(status, "waiting for the engine to load…");
+        }
+        long deadline = System.currentTimeMillis() + STARTUP_TIMEOUT_MS;
+        int tick = 0;
+        while (System.currentTimeMillis() < deadline) {
+            if (ColibriClient.isHealthy(cfg.engineUrl, cfg.apiKey)) {
+                report(status, "engine ready");
+                return true;
+            }
+            if (process == null || !process.isAlive()) {
+                report(status, "the engine exited — see " + new File(System.getProperty("java.io.tmpdir"), "colibri-plugin-engine.log"));
+                return false;
+            }
+            if (++tick % 5 == 0) report(status, "loading model… (" + (tick * 2) + "s)");
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                report(status, "engine start interrupted");
+                return false;
+            }
+        }
+        report(status, "engine did not become ready in time");
+        return false;
+    }
+
+    /** Stop only a process this plugin spawned; attached engines are left alone. */
+    public static synchronized void stopOwned() {
+        Process owned = process;
+        if (owned == null) return;
+        process = null;
+        if (!owned.isAlive()) return;
+        owned.descendants().forEach(handle -> {
+            try {
+                handle.destroyForcibly();
+            } catch (RuntimeException ignored) {
+                // already gone
+            }
+        });
+        owned.destroyForcibly();
+        try {
+            owned.waitFor(java.util.concurrent.TimeUnit.SECONDS.toMillis(10),
+                    java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
