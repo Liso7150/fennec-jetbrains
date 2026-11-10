@@ -1,7 +1,7 @@
 <idea-plugin>
   <id>desktop.colibri.ide</id>
   <name>Colibri Code</name>
-  <version>1.1.0</version>
+  <version>1.2.0</version>
   <vendor>Colibri Desktop</vendor>
 
   <description><![CDATA[

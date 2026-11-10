@@ -8,6 +8,7 @@ OpenAI-compatible server and starts it locally on demand.
 ## Features
 
 - SSE chat tool window, one per project; Stop cancels only that project's stream.
+- Streams engine `reasoning_content` into a visible "thinking" section before the answer.
 - Explain / Fix / Write Tests editor actions.
 - Engine starts on the first message, attaches to a running engine, and stops the engine it owns when the IDE closes.
 - Shared suite config with per-project overrides; local bearer key by default.
@@ -16,7 +17,7 @@ OpenAI-compatible server and starts it locally on demand.
 ## Build
 
 ```bash
-./build-plugin.sh    # compiles against the IDE JBR, outputs build/ColibriCode-plugin-1.1.0.zip
+./build-plugin.sh    # compiles against the IDE JBR, outputs build/ColibriCode-plugin-1.2.0.zip
 ```
 
 Install the zip via *Settings → Plugins → ⚙ → Install Plugin from Disk*.

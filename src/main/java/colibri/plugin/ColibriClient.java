@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 public final class ColibriClient {
     public interface Callback {
         void onDelta(String text);
+        void onReasoning(String text);
         void onDone();
         void onError(String message);
     }
@@ -67,6 +68,10 @@ public final class ColibriClient {
 
         private synchronized void delta(Callback callback, String text) {
             if (!cancelled && !terminal) callback.onDelta(text);
+        }
+
+        private synchronized void reasoning(Callback callback, String text) {
+            if (!cancelled && !terminal) callback.onReasoning(text);
         }
 
         private synchronized void finish(Callback callback, String error) {
@@ -211,18 +216,23 @@ public final class ColibriClient {
             return true;
         }
         String text = null;
+        String reasoning = null;
         try {
             if (payload.isBlank()) return false;
             JsonObject chunk = JsonParser.parseString(payload).getAsJsonObject();
             JsonArray choices = chunk.getAsJsonArray("choices");
             if (choices == null || choices.isEmpty()) return false;
             JsonObject delta = choices.get(0).getAsJsonObject().getAsJsonObject("delta");
-            if (delta != null && delta.has("content") && !delta.get("content").isJsonNull()) {
-                text = delta.get("content").getAsString();
+            if (delta != null) {
+                JsonElement content = delta.get("content");
+                if (content != null && !content.isJsonNull()) text = content.getAsString();
+                JsonElement thought = delta.has("reasoning_content") ? delta.get("reasoning_content") : delta.get("reasoning");
+                if (thought != null && !thought.isJsonNull()) reasoning = thought.getAsString();
             }
         } catch (RuntimeException ignored) {
             // Ignore malformed/keep-alive events, not callback failures.
         }
+        if (reasoning != null && !reasoning.isEmpty()) handle.reasoning(callback, reasoning);
         if (text != null && !text.isEmpty()) handle.delta(callback, text);
         return false;
     }

@@ -42,6 +42,7 @@ public class ColibriChatPanel extends JPanel implements Disposable {
     private long generation;
     private long statusGeneration;
     private final StringBuilder currentAnswer = new StringBuilder();
+    private boolean reasoningShown;
 
     public ColibriChatPanel(Project project) {
         super(new BorderLayout(0, 0));
@@ -187,6 +188,7 @@ public class ColibriChatPanel extends JPanel implements Disposable {
         history.add(ColibriClient.message("user", text));
 
         currentAnswer.setLength(0);
+        reasoningShown = false;
         streaming = true;
         sendButton.setEnabled(false);
         stopButton.setEnabled(true);
@@ -217,8 +219,20 @@ public class ColibriChatPanel extends JPanel implements Disposable {
         activeStream = ColibriClient.streamChat(cfg.engineUrl, cfg.modelId, messages,
                 cfg.temperature, cfg.maxTokens, cfg.apiKey, new ColibriClient.Callback() {
                     @Override
+                    public void onReasoning(@NotNull String delta) {
+                        onRequest(request, () -> {
+                            if (!reasoningShown) {
+                                append("thinking\n");
+                                reasoningShown = true;
+                            }
+                            append(delta);
+                        });
+                    }
+
+                    @Override
                     public void onDelta(@NotNull String delta) {
                         onRequest(request, () -> {
+                            if (reasoningShown && currentAnswer.length() == 0) append("\n\nanswer\n");
                             currentAnswer.append(delta);
                             append(delta);
                         });
