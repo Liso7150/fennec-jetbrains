@@ -5,6 +5,14 @@ JetBrains IDEs: a right-side SSE chat tool window plus editor actions
 **Explain / Fix / Write Tests** (Ctrl+Alt+E / F). Talks to the engine's
 OpenAI-compatible server and starts it locally on demand.
 
+## Features
+
+- SSE chat tool window, one per project; Stop cancels only that project's stream.
+- Explain / Fix / Write Tests editor actions.
+- Engine starts on the first message, attaches to a running engine, and stops the engine it owns when the IDE closes.
+- Shared suite config with per-project overrides; local bearer key by default.
+- ACP bridge for JetBrains Air (`air/colibri-acp.py`) with its own test suite.
+
 ## Build
 
 ```bash
