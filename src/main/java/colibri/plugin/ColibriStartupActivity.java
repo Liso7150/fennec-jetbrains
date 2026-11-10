@@ -12,10 +12,11 @@ public class ColibriStartupActivity implements ProjectActivity {
 
     @Override
     public @Nullable Object execute(@NotNull Project project, @NotNull Continuation<? super Unit> continuation) {
-        ColibriSettings.State cfg = ColibriSettings.getInstance().getState();
-        if (cfg.autoStart) {
-            EngineLauncher.start(null);
-        }
+        com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            if (!project.isDisposed() && ColibriSettings.getInstance().getState().autoStart) {
+                EngineLauncher.start(null);
+            }
+        });
         return Unit.INSTANCE;
     }
 }

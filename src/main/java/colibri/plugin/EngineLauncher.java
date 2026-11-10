@@ -1,10 +1,10 @@
 package colibri.plugin;
 
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -12,9 +12,9 @@ import java.util.function.Consumer;
 /**
  * Starts the Colibri engine for the plugin when the IDE opens it.
  *
- * The engine is a normal child process (python openai_server.py). It is left
- * running when the IDE closes: the desktop app may be using it too, and Colibri
- * keeps its warm tier between sessions on purpose.
+ * Uses the same launcher and serve flags as the rest of the suite, and only for
+ * a local http endpoint. The child is left running when the IDE closes: the
+ * desktop app may be using it too, and Colibri keeps its warm tier on purpose.
  */
 public final class EngineLauncher {
 
@@ -23,36 +23,66 @@ public final class EngineLauncher {
     private EngineLauncher() {}
 
     public static boolean start(@Nullable Consumer<String> status) {
-        ColibriSettings.State cfg = ColibriSettings.getInstance().getState();
-        if (ColibriClient.isHealthy(cfg.engineUrl)) {
-            if (status != null) status.accept("engine already running");
-            return true;
-        }
-        if (cfg.modelDir == null || cfg.modelDir.isBlank()) {
-            if (status != null) status.accept("set a model directory in Settings → Colibri Code");
+        ColibriSettings.State cfg;
+        try {
+            cfg = ColibriSettings.getInstance().effectiveState();
+        } catch (RuntimeException e) {
+            report(status, "cannot read Colibri settings: " + e.getMessage());
             return false;
         }
-        List<String> cmd = new ArrayList<>();
-        cmd.add(cfg.python);
-        cmd.add("openai_server.py");
-        cmd.add("--model");
-        cmd.add(cfg.modelDir);
-        cmd.add("--host");
-        cmd.add("127.0.0.1");
-        cmd.add("--port");
-        cmd.add(String.valueOf(portOf(cfg.engineUrl)));
-
-        ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.directory(new File(cfg.runtime));
-        pb.redirectErrorStream(true);
-        pb.redirectOutput(ProcessBuilder.Redirect.appendTo(
-                new File(System.getProperty("java.io.tmpdir"), "colibri-plugin-engine.log")));
         try {
+            if (ColibriClient.isHealthy(cfg.engineUrl, cfg.apiKey)) {
+                report(status, "engine already running");
+                return true;
+            }
+            if (cfg.modelDir.isBlank() || !new File(cfg.modelDir).isDirectory()) {
+                report(status, "set an installed model directory in Settings → Colibri Code");
+                return false;
+            }
+            if (!new File(cfg.python).isFile()) {
+                report(status, "Python runtime not found: " + cfg.python);
+                return false;
+            }
+            File launcher = new File(cfg.runtime, "coli");
+            if (!launcher.isFile()) {
+                report(status, "Colibri launcher missing: " + launcher);
+                return false;
+            }
+            URI uri = URI.create(cfg.engineUrl);
+            if (!"http".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null || !isLoopback(uri.getHost())) {
+                report(status, "the engine URL is not a local http endpoint; start that server separately");
+                return false;
+            }
+            List<String> cmd = new ArrayList<>();
+            cmd.add(cfg.python);
+            cmd.add(launcher.getPath());
+            cmd.add("serve");
+            cmd.add("--model");
+            cmd.add(cfg.modelDir);
+            cmd.add("--auto-tier");
+            cmd.add("--policy");
+            cmd.add(cfg.policy);
+            cmd.add("--ctx");
+            cmd.add(String.valueOf(cfg.ctx));
+            cmd.add("--host");
+            cmd.add(uri.getHost());
+            cmd.add("--port");
+            cmd.add(String.valueOf(uri.getPort() < 0 ? 80 : uri.getPort()));
+            cmd.add("--api-key");
+            cmd.add(cfg.apiKey);
+
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            pb.directory(new File(cfg.runtime));
+            pb.redirectErrorStream(true);
+            pb.redirectOutput(ProcessBuilder.Redirect.appendTo(
+                    new File(System.getProperty("java.io.tmpdir"), "colibri-plugin-engine.log")));
+            pb.environment().putIfAbsent("PYTHONIOENCODING", "utf-8");
+            pb.environment().putIfAbsent("PYTHONUTF8", "1");
             process = pb.start();
-            if (status != null) status.accept("starting engine (first load can take minutes)…");
+            report(status, "starting engine (first load can take minutes)…");
             return true;
-        } catch (IOException e) {
-            if (status != null) status.accept("could not start the engine: " + e.getMessage());
+        } catch (IOException | RuntimeException e) {
+            report(status, "could not start the engine: " + e.getMessage());
             return false;
         }
     }
@@ -61,15 +91,12 @@ public final class EngineLauncher {
         return process != null && process.isAlive();
     }
 
-    private static int portOf(@NotNull String url) {
-        try {
-            String withoutScheme = url.substring(url.indexOf("://") + 3);
-            int colon = withoutScheme.indexOf(':');
-            if (colon < 0) return 80;
-            String port = withoutScheme.substring(colon + 1).replaceAll("/.*$", "");
-            return Integer.parseInt(port);
-        } catch (RuntimeException e) {
-            return 8765;
-        }
+    private static boolean isLoopback(String host) {
+        return "localhost".equalsIgnoreCase(host) || "::1".equals(host) || "[::1]".equals(host)
+                || host.matches("127(\\.\\d{1,3}){3}");
+    }
+
+    private static void report(@Nullable Consumer<String> status, String text) {
+        if (status != null) status.accept(text);
     }
 }

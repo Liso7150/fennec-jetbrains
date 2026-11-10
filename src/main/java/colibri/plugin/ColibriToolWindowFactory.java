@@ -12,7 +12,7 @@ public class ColibriToolWindowFactory implements ToolWindowFactory, DumbAware {
 
     @Override
     public void createToolWindowContent(@NotNull Project project, @NotNull ToolWindow toolWindow) {
-        ColibriChatPanel panel = new ColibriChatPanel();
+        ColibriChatPanel panel = new ColibriChatPanel(project);
         Content content = ContentFactory.getInstance().createContent(panel, "", false);
         content.setDisposer(panel);
         toolWindow.getContentManager().addContent(content);

@@ -2,6 +2,7 @@ package colibri.plugin;
 
 import com.intellij.openapi.options.Configurable;
 import com.intellij.openapi.options.ConfigurationException;
+import com.intellij.ui.components.JBLabel;
 import com.intellij.ui.components.JBTextField;
 import com.intellij.util.ui.FormBuilder;
 import org.jetbrains.annotations.Nls;
@@ -40,6 +41,7 @@ public class ColibriConfigurable implements Configurable {
         temperature = new JSpinner(new SpinnerNumberModel(0.2, 0.0, 2.0, 0.05));
 
         return FormBuilder.createFormBuilder()
+                .addComponent(new JBLabel("Blank fields inherit the suite configuration (~/.colibri/config.json and COLIBRI_* variables)."))
                 .addLabeledComponent("Engine URL", engineUrl)
                 .addLabeledComponent("Model id", modelId)
                 .addLabeledComponent("API key (COLI_API_KEY)", apiKey)
@@ -83,7 +85,13 @@ public class ColibriConfigurable implements Configurable {
 
     @Override
     public void reset() {
-        ColibriSettings.State s = ColibriSettings.getInstance().getState();
+        ColibriSettings settings = ColibriSettings.getInstance();
+        ColibriSettings.State s;
+        try {
+            s = settings.effectiveState();
+        } catch (RuntimeException e) {
+            s = settings.getState();
+        }
         engineUrl.setText(s.engineUrl);
         modelId.setText(s.modelId);
         apiKey.setText(s.apiKey);

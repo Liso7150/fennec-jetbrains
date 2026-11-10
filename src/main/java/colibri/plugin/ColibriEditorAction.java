@@ -54,18 +54,13 @@ public abstract class ColibriEditorAction extends AnAction {
 
     private void launch(@NotNull Project project, @NotNull String prompt, @NotNull String code) {
         ToolWindow window = ToolWindowManager.getInstance(project).getToolWindow("Colibri");
-        ColibriChatPanel panel = ColibriChatPanel.getLast();
-        if (panel == null) {
-            if (window != null) window.show();
-            // the panel is created lazily when the tool window first shows
-            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
-                ColibriChatPanel created = ColibriChatPanel.getLast();
-                if (created != null) created.ask(prompt, code);
-            });
-            return;
-        }
-        if (window != null) window.show();
-        panel.ask(prompt, code);
+        if (window == null || project.isDisposed()) return;
+        // show's callback runs after lazy tool-window content creation, in this project.
+        window.show(() -> {
+            if (project.isDisposed()) return;
+            ColibriChatPanel panel = ColibriChatPanel.getInstance(project);
+            if (panel != null) panel.ask(prompt, code);
+        });
     }
 
     /** Kept for subclasses that want the file path rather than its contents. */

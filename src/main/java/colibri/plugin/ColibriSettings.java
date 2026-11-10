@@ -6,31 +6,80 @@ import com.intellij.openapi.components.State;
 import com.intellij.openapi.components.Storage;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.File;
+import java.util.Map;
+import java.util.Set;
+
 /**
- * Everything the plugin needs to find the local Colibri engine.
+ * Plugin overrides on top of the suite's shared configuration.
  *
- * Defaults point at the layout the desktop installer uses, so a fresh install
- * connects without opening the settings page.
+ * Every field is optional: blank means "use colibri-core's config.json and the
+ * COLIBRI_* environment", so one machine configures the desktop app, the CLI
+ * and this plugin at once. Nothing here assumes a developer's drive letter.
  */
 @State(name = "ColibriSettings", storages = @Storage("colibri-code.xml"))
 public class ColibriSettings implements PersistentStateComponent<ColibriSettings.State> {
 
     public static class State {
-        public String engineUrl = "http://127.0.0.1:8765";
-        public String modelId = "qwen3-coder-30b-a3b-colibri";
-        public String apiKey = System.getenv("COLI_API_KEY") == null ? "" : System.getenv("COLI_API_KEY");
+        public String engineUrl = "";
+        public String modelId = "";
+        public String apiKey = "";
         public String modelDir = "";
-        public String python = "D:\\Colibri\\.venv\\Scripts\\python.exe";
-        public String runtime = "D:\\colibri-models\\.colibri\\runtime\\colibri-v2.1.0";
+        public String python = "";
+        public String runtime = "";
+        public String policy = "";
+        public int ctx = -1;
         public boolean autoStart = false;
-        public int maxTokens = 2048;
+        public int maxTokens = 4096;
         public double temperature = 0.2;
     }
+
+    // Values written by the first 1.0.0 build; they pinned a drive and port that
+    // the suite no longer uses, so treat them as "not configured".
+    private static final Set<String> LEGACY = Set.of(
+            "http://127.0.0.1:8765",
+            "D:\\Colibri\\.venv\\Scripts\\python.exe",
+            "D:\\colibri-models\\.colibri\\runtime\\colibri-v2.1.0",
+            "qwen3-coder-30b-a3b-colibri");
 
     public State state = new State();
 
     public static ColibriSettings getInstance() {
         return ApplicationManager.getApplication().getService(ColibriSettings.class);
+    }
+
+    /** Settings resolved against the shared configuration; never returns blanks. */
+    public State effectiveState() {
+        SharedConfig shared;
+        try {
+            shared = SharedConfig.load();
+        } catch (IllegalArgumentException broken) {
+            // Keep the plugin usable; the engine check will surface the real error.
+            shared = SharedConfig.load(Map.of(), java.nio.file.Path.of(System.getProperty("user.home")));
+        }
+        State raw = state == null ? new State() : state;
+        State resolved = new State();
+        resolved.engineUrl = trimUrl(override(raw.engineUrl, shared.engineUrl));
+        resolved.modelId = override(raw.modelId, "");
+        resolved.apiKey = raw.apiKey != null && !raw.apiKey.isBlank() ? raw.apiKey : shared.apiKey;
+        resolved.modelDir = override(raw.modelDir, shared.model);
+        resolved.python = override(raw.python, shared.python);
+        resolved.runtime = override(raw.runtime, shared.engineRoot + File.separator + "c");
+        resolved.policy = raw.policy != null && !raw.policy.isBlank() ? raw.policy : shared.policy;
+        resolved.ctx = raw.ctx >= 0 ? raw.ctx : shared.ctx;
+        resolved.autoStart = raw.autoStart;
+        resolved.maxTokens = raw.maxTokens;
+        resolved.temperature = raw.temperature;
+        return resolved;
+    }
+
+    private static String override(String raw, String fallback) {
+        if (raw == null || raw.isBlank() || LEGACY.contains(raw.trim())) return fallback;
+        return raw.trim();
+    }
+
+    private static String trimUrl(String url) {
+        return url.replaceAll("/+$", "");
     }
 
     @Override

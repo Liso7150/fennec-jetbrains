@@ -4,7 +4,6 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import org.jetbrains.annotations.NotNull;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -14,146 +13,218 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.function.Consumer;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
-/**
- * Minimal streaming client for the Colibri engine's OpenAI-compatible endpoint.
- *
- * Deliberately dependency-free: HttpURLConnection plus Gson (bundled with the
- * platform) keeps the plugin loadable in any IntelliJ-based IDE without shipping
- * extra libraries.
- */
+/** HTTP/SSE client using only the JDK and the platform's bundled Gson. */
 public final class ColibriClient {
-
     public interface Callback {
-        void onDelta(@NotNull String text);
+        void onDelta(String text);
         void onDone();
-        void onError(@NotNull String message);
+        void onError(String message);
+    }
+
+    /** Owns both discovery and streaming. No callbacks begin after cancel returns. */
+    public static final class StreamHandle implements AutoCloseable {
+        private boolean cancelled;
+        private boolean terminal;
+        private HttpURLConnection connection;
+        private Thread worker;
+        private final CountDownLatch terminated = new CountDownLatch(1);
+
+        public void cancel() {
+            HttpURLConnection c;
+            Thread t;
+            synchronized (this) {
+                if (cancelled) return;
+                cancelled = true;
+                c = connection;
+                connection = null;
+                t = worker;
+            }
+            // Virtual-thread socket I/O is interruptible, including an idle SSE read.
+            if (t != null) t.interrupt();
+            // disconnect can wait for an in-flight read; never do that on the EDT.
+            if (c != null) Thread.ofVirtual().name("Colibri-disconnect").start(c::disconnect);
+        }
+
+        @Override
+        public void close() { cancel(); }
+
+        public synchronized boolean isCancelled() { return cancelled; }
+
+        private synchronized void attach(HttpURLConnection c) throws IOException {
+            if (cancelled) throw new IOException("request cancelled");
+            connection = c;
+        }
+
+        private void release(HttpURLConnection c) {
+            synchronized (this) {
+                if (connection == c) connection = null;
+            }
+            if (c != null) c.disconnect();
+        }
+
+        private synchronized void delta(Callback callback, String text) {
+            if (!cancelled && !terminal) callback.onDelta(text);
+        }
+
+        private synchronized void finish(Callback callback, String error) {
+            if (cancelled || terminal) return;
+            terminal = true;
+            if (error == null) callback.onDone();
+            else callback.onError(error);
+        }
+
+        boolean awaitTermination(long milliseconds) throws InterruptedException {
+            return terminated.await(milliseconds, TimeUnit.MILLISECONDS);
+        }
     }
 
     private ColibriClient() {}
 
-    /** The engine names its own model id; asking it avoids a 404 from a guessed name. */
-    public static String resolveModelId(@NotNull String baseUrl, @NotNull String fallback, @NotNull String apiKey) {
+    private static HttpURLConnection connect(String baseUrl, String path, String apiKey,
+                                             int connectTimeout, int readTimeout) throws IOException {
+        HttpURLConnection c = (HttpURLConnection) new URL(baseUrl.replaceAll("/+$", "") + path).openConnection();
+        c.setConnectTimeout(connectTimeout);
+        c.setReadTimeout(readTimeout);
+        c.setInstanceFollowRedirects(false);
+        if (!apiKey.isEmpty()) c.setRequestProperty("Authorization", "Bearer " + apiKey);
+        return c;
+    }
+
+    /** Blocking helper: callers must not invoke this on the EDT. */
+    public static String resolveModelId(String baseUrl, String fallback, String apiKey) {
+        return resolveModelId(baseUrl, fallback, apiKey, new StreamHandle());
+    }
+
+    private static String resolveModelId(String baseUrl, String fallback, String apiKey, StreamHandle handle) {
+        HttpURLConnection c = null;
         try {
-            HttpURLConnection c = (HttpURLConnection) new URL(baseUrl + "/v1/models").openConnection();
-            c.setConnectTimeout(2000);
-            c.setReadTimeout(3000);
-            if (!apiKey.isEmpty()) c.setRequestProperty("Authorization", "Bearer " + apiKey);
+            c = connect(baseUrl, "/v1/models", apiKey, 2000, 3000);
+            handle.attach(c);
             if (c.getResponseCode() != 200) return fallback;
-            StringBuilder body = new StringBuilder();
             try (BufferedReader r = new BufferedReader(new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = r.readLine()) != null) body.append(line);
+                JsonArray data = JsonParser.parseReader(r).getAsJsonObject().getAsJsonArray("data");
+                if (data != null) {
+                    for (JsonElement item : data) {
+                        if (!item.isJsonObject()) continue;
+                        JsonElement id = item.getAsJsonObject().get("id");
+                        if (id != null && id.isJsonPrimitive() && id.getAsJsonPrimitive().isString()
+                                && !id.getAsString().isBlank()) return id.getAsString();
+                    }
+                }
             }
-            c.disconnect();
-            JsonObject root = JsonParser.parseString(body.toString()).getAsJsonObject();
-            JsonArray data = root.getAsJsonArray("data");
-            if (data != null && !data.isEmpty()) {
-                String id = data.get(0).getAsJsonObject().get("id").getAsString();
-                if (id != null && !id.isEmpty()) return id;
-            }
-        } catch (Exception ignored) {
+        } catch (IOException | RuntimeException ignored) {
+            // Offline/older engines can still accept the explicitly configured model id.
+        } finally {
+            handle.release(c);
         }
         return fallback;
     }
 
-    public static boolean isHealthy(@NotNull String baseUrl) {
+    public static boolean isHealthy(String baseUrl, String apiKey) {
+        return healthStatus(baseUrl, apiKey) == 200;
+    }
+
+    /** -1 means no HTTP response; an unhealthy responding server must not be replaced. */
+    static int healthStatus(String baseUrl, String apiKey) {
+        HttpURLConnection c = null;
         try {
-            HttpURLConnection c = (HttpURLConnection) new URL(baseUrl + "/health").openConnection();
-            c.setConnectTimeout(1200);
-            c.setReadTimeout(1500);
-            int code = c.getResponseCode();
-            c.disconnect();
-            return code >= 200 && code < 500;
-        } catch (IOException e) {
-            return false;
+            c = connect(baseUrl, "/health", apiKey, 1200, 1500);
+            return c.getResponseCode();
+        } catch (IOException | RuntimeException e) {
+            return -1;
+        } finally {
+            if (c != null) c.disconnect();
         }
     }
 
-    /** Streams a chat completion on a background thread; tokens arrive on that thread. */
-    public static void streamChat(@NotNull String baseUrl,
-                                  @NotNull String model,
-                                  @NotNull List<JsonObject> messages,
-                                  double temperature,
-                                  int maxTokens,
-                                  @NotNull String apiKey,
-                                  @NotNull Callback callback) {
-        Thread worker = new Thread(() -> {
+    /** Discovery and tokens run off the EDT; cancel covers either phase. */
+    public static StreamHandle streamChat(String baseUrl, String fallbackModel, List<JsonObject> messages,
+                                          double temperature, int maxTokens, String apiKey, Callback callback) {
+        StreamHandle handle = new StreamHandle();
+        JsonArray snapshot = new JsonArray();
+        for (JsonObject message : messages) snapshot.add(message.deepCopy());
+        handle.worker = Thread.ofVirtual().name("Colibri-stream").unstarted(() -> {
             HttpURLConnection conn = null;
             try {
+                String model = resolveModelId(baseUrl, fallbackModel, apiKey, handle);
+                if (handle.isCancelled()) return;
                 JsonObject body = new JsonObject();
                 body.addProperty("model", model);
                 body.addProperty("stream", true);
                 body.addProperty("temperature", temperature);
                 body.addProperty("max_tokens", maxTokens);
-                JsonArray arr = new JsonArray();
-                for (JsonObject m : messages) arr.add(m);
-                body.add("messages", arr);
+                body.add("messages", snapshot);
 
-                conn = (HttpURLConnection) new URL(baseUrl + "/v1/chat/completions").openConnection();
+                conn = connect(baseUrl, "/v1/chat/completions", apiKey, 5000, 600000);
+                handle.attach(conn);
                 conn.setRequestMethod("POST");
                 conn.setDoOutput(true);
-                conn.setConnectTimeout(5000);
-                conn.setReadTimeout(600000);
                 conn.setRequestProperty("Content-Type", "application/json");
                 conn.setRequestProperty("Accept", "text/event-stream");
-                if (!apiKey.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + apiKey);
-                try (OutputStream os = conn.getOutputStream()) {
-                    os.write(body.toString().getBytes(StandardCharsets.UTF_8));
-                }
+                byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
+                conn.setFixedLengthStreamingMode(bytes.length);
+                try (OutputStream os = conn.getOutputStream()) { os.write(bytes); }
 
                 int code = conn.getResponseCode();
                 if (code != 200) {
                     String detail = "";
                     if (conn.getErrorStream() != null) {
-                        try (BufferedReader err = new BufferedReader(new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
-                            StringBuilder sb = new StringBuilder();
-                            String line;
-                            while ((line = err.readLine()) != null) sb.append(line).append('\n');
-                            detail = sb.toString();
+                        try (var err = conn.getErrorStream()) {
+                            detail = new String(err.readNBytes(600), StandardCharsets.UTF_8);
                         }
                     }
-                    callback.onError("engine returned " + code + ": " + truncate(detail));
+                    handle.finish(callback, "engine returned " + code + ": " + detail);
                     return;
                 }
-
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                    StringBuilder event = new StringBuilder();
                     String line;
-                    while ((line = reader.readLine()) != null) {
-                        if (!line.startsWith("data:")) continue;
-                        String payload = line.substring(5).trim();
-                        if (payload.isEmpty() || "[DONE]".equals(payload)) continue;
-                        try {
-                            JsonObject chunk = JsonParser.parseString(payload).getAsJsonObject();
-                            JsonArray choices = chunk.getAsJsonArray("choices");
-                            if (choices == null || choices.isEmpty()) continue;
-                            JsonObject choice = choices.get(0).getAsJsonObject();
-                            JsonElement delta = choice.get("delta");
-                            if (delta == null || !delta.isJsonObject()) continue;
-                            JsonElement content = delta.getAsJsonObject().get("content");
-                            if (content != null && !content.isJsonNull()) {
-                                String text = content.getAsString();
-                                if (!text.isEmpty()) callback.onDelta(text);
-                            }
-                        } catch (RuntimeException ignored) {
-                            // a malformed keep-alive line must not end the answer
+                    while (!handle.isCancelled() && (line = reader.readLine()) != null) {
+                        if (line.isEmpty()) {
+                            if (dispatch(event.toString(), handle, callback)) return;
+                            event.setLength(0);
+                        } else if (line.startsWith("data:")) {
+                            if (event.length() > 0) event.append('\n');
+                            event.append(line.substring(5).stripLeading());
                         }
                     }
+                    if (dispatch(event.toString(), handle, callback)) return;
                 }
-                callback.onDone();
-            } catch (IOException e) {
-                callback.onError("cannot reach the Colibri engine at " + baseUrl + " (" + e.getMessage() + ")");
+                handle.finish(callback, "engine stream ended before [DONE]");
+            } catch (IOException | RuntimeException e) {
+                handle.finish(callback, "cannot reach the Colibri engine at " + baseUrl + " (" + e.getMessage() + ")");
             } finally {
-                if (conn != null) conn.disconnect();
+                handle.release(conn);
+                handle.terminated.countDown();
             }
-        }, "Colibri-stream");
-        worker.setDaemon(true);
-        worker.start();
+        });
+        handle.worker.start();
+        return handle;
     }
 
-    private static String truncate(String s) {
-        return s.length() > 600 ? s.substring(0, 600) + "…" : s;
+    private static boolean dispatch(String payload, StreamHandle handle, Callback callback) {
+        if ("[DONE]".equals(payload.trim())) {
+            handle.finish(callback, null);
+            return true;
+        }
+        String text = null;
+        try {
+            if (payload.isBlank()) return false;
+            JsonObject chunk = JsonParser.parseString(payload).getAsJsonObject();
+            JsonArray choices = chunk.getAsJsonArray("choices");
+            if (choices == null || choices.isEmpty()) return false;
+            JsonObject delta = choices.get(0).getAsJsonObject().getAsJsonObject("delta");
+            if (delta != null && delta.has("content") && !delta.get("content").isJsonNull()) {
+                text = delta.get("content").getAsString();
+            }
+        } catch (RuntimeException ignored) {
+            // Ignore malformed/keep-alive events, not callback failures.
+        }
+        if (text != null && !text.isEmpty()) handle.delta(callback, text);
+        return false;
     }
 
     public static JsonObject message(String role, String content) {

@@ -15,8 +15,15 @@ Install the zip via *Settings → Plugins → ⚙ → Install Plugin from Disk*.
 
 ## Configure
 
-*Settings → Tools → Colibri*: engine URL (default `http://127.0.0.1:8765`),
-API key (from `COLI_API_KEY`, local bearer), optional auto-start.
+*Settings → Tools → Colibri Code*. Every field is optional: blank fields are
+inherited from the suite configuration (`~/.colibri/config.json` or
+`$COLIBRI_CONFIG`, plus `COLIBRI_*` variables) that the desktop app, CLI and
+installer share. Fresh installs therefore need no setup when the suite is
+installed. Engine URL defaults to `http://127.0.0.1:8184`; the API key comes
+from `COLIBRI_API_KEY` (local bearer by default).
+
+Each project gets its own tool window; Stop cancels the in-flight stream in
+that project only.
 
 ## ACP bridge (JetBrains Air)
 

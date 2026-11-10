@@ -3,6 +3,8 @@ package colibri.plugin;
 import com.google.gson.JsonObject;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.Key;
 import com.intellij.ui.JBColor;
 import com.intellij.ui.components.JBScrollPane;
 import org.jetbrains.annotations.NotNull;
@@ -18,12 +20,12 @@ import java.util.List;
 /**
  * The tool window: a streaming chat with the local Colibri model.
  *
- * A single panel per project is kept in {@link #last} so editor actions can type
- * a prompt into it without the user hunting for the window.
+ * Editor actions look up the panel on their own project, never a global last window.
  */
 public class ColibriChatPanel extends JPanel implements Disposable {
 
-    private static volatile ColibriChatPanel last;
+    private static final Key<ColibriChatPanel> PANEL_KEY = Key.create("colibri.chat.panel");
+    private final Project project;
 
     private final List<JsonObject> history = new ArrayList<>();
     private final JTextArea transcript = new JTextArea();
@@ -33,14 +35,19 @@ public class ColibriChatPanel extends JPanel implements Disposable {
     private final JButton stopButton = new JButton("Stop");
     private final JButton startButton = new JButton("Start engine");
 
-    private volatile Thread activeStream;
-    private volatile boolean streaming;
+    // All request/UI state, including currentAnswer, is confined to the EDT.
+    private ColibriClient.StreamHandle activeStream;
+    private boolean streaming;
+    private boolean disposed;
+    private long generation;
+    private long statusGeneration;
     private final StringBuilder currentAnswer = new StringBuilder();
 
-    public ColibriChatPanel() {
+    public ColibriChatPanel(Project project) {
         super(new BorderLayout(0, 0));
+        this.project = project;
         setBorder(new EmptyBorder(8, 8, 8, 8));
-        last = this;
+        project.putUserData(PANEL_KEY, this);
 
         transcript.setEditable(false);
         transcript.setLineWrap(true);
@@ -84,8 +91,16 @@ public class ColibriChatPanel extends JPanel implements Disposable {
         sendButton.addActionListener(e -> send());
         stopButton.addActionListener(e -> stop());
         startButton.addActionListener(e -> {
-            boolean started = EngineLauncher.start(this::setStatus);
-            if (!started) setStatus("engine launch failed — check Colibri settings");
+            long ticket = ++statusGeneration;
+            startButton.setEnabled(false);
+            status.setText("checking engine…");
+            ApplicationManager.getApplication().executeOnPooledThread(() -> {
+                EngineLauncher.start(text -> SwingUtilities.invokeLater(() -> {
+                    if (disposed || project.isDisposed() || ticket != statusGeneration) return;
+                    status.setText(text);
+                    startButton.setEnabled(true);
+                }));
+            });
         });
         stopButton.setEnabled(false);
         refreshStatus();
@@ -93,29 +108,48 @@ public class ColibriChatPanel extends JPanel implements Disposable {
 
     @Override
     public void dispose() {
-        if (last == this) last = null;
+        // Content disposal is normally on the EDT; preserve confinement for other callers.
+        if (!SwingUtilities.isEventDispatchThread()) {
+            try {
+                SwingUtilities.invokeAndWait(this::dispose);
+            } catch (Exception e) {
+                throw new IllegalStateException("Could not dispose Colibri panel", e);
+            }
+            return;
+        }
+        disposed = true;
+        ++generation;
+        ++statusGeneration;
+        if (activeStream != null) activeStream.cancel();
+        activeStream = null;
+        streaming = false;
+        if (project.getUserData(PANEL_KEY) == this) project.putUserData(PANEL_KEY, null);
     }
 
-    public static ColibriChatPanel getLast() {
-        return last;
+    public static ColibriChatPanel getInstance(Project project) {
+        return project.getUserData(PANEL_KEY);
     }
 
     /** Entry point for editor actions: show a prompt and its code context, then run it. */
     public void ask(@NotNull String prompt, @NotNull String codeContext) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> ask(prompt, codeContext));
+            return;
+        }
+        if (disposed || project.isDisposed()) return;
+        if (streaming) stop();
         String composed = prompt + (codeContext.isEmpty() ? "" : "\n\n```\n" + codeContext + "\n```");
         input.setText(composed);
         send();
     }
 
-    private void setStatus(String text) {
-        SwingUtilities.invokeLater(() -> status.setText(text));
-    }
-
     private void refreshStatus() {
-        ColibriSettings.State state = ColibriSettings.getInstance().getState();
+        long ticket = ++statusGeneration;
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
-            boolean ok = ColibriClient.isHealthy(state.engineUrl);
+            ColibriSettings.State state = ColibriSettings.getInstance().effectiveState();
+            boolean ok = ColibriClient.isHealthy(state.engineUrl, state.apiKey);
             SwingUtilities.invokeLater(() -> {
+                if (disposed || project.isDisposed() || ticket != statusGeneration) return;
                 status.setText(ok ? "engine ready · " + state.engineUrl : "engine offline · " + state.engineUrl);
                 status.setForeground(ok ? new JBColor(new Color(0x2f8a52), new Color(0x5fd08b))
                                         : new JBColor(new Color(0xa4462f), new Color(0xe07a63)));
@@ -125,11 +159,11 @@ public class ColibriChatPanel extends JPanel implements Disposable {
     }
 
     private void send() {
-        if (streaming) return;
+        if (disposed || project.isDisposed() || streaming) return;
         String text = input.getText().trim();
         if (text.isEmpty()) return;
         input.setText("");
-        ColibriSettings.State cfg = ColibriSettings.getInstance().getState();
+        ColibriSettings.State cfg = ColibriSettings.getInstance().effectiveState();
 
         append("you\n" + text + "\n\n");
         append("colibri\n");
@@ -146,56 +180,64 @@ public class ColibriChatPanel extends JPanel implements Disposable {
         streaming = true;
         sendButton.setEnabled(false);
         stopButton.setEnabled(true);
-        setStatus("thinking…");
+        ++statusGeneration;
+        status.setText("thinking…");
+        long request = ++generation;
 
-        String modelId = ColibriClient.resolveModelId(cfg.engineUrl, cfg.modelId, cfg.apiKey);
-
-        ColibriClient.streamChat(cfg.engineUrl, modelId, messages, cfg.temperature, cfg.maxTokens, cfg.apiKey,
-                new ColibriClient.Callback() {
+        activeStream = ColibriClient.streamChat(cfg.engineUrl, cfg.modelId, messages,
+                cfg.temperature, cfg.maxTokens, cfg.apiKey, new ColibriClient.Callback() {
                     @Override
                     public void onDelta(@NotNull String delta) {
-                        currentAnswer.append(delta);
-                        SwingUtilities.invokeLater(() -> transcript.append(delta));
+                        onRequest(request, () -> {
+                            currentAnswer.append(delta);
+                            append(delta);
+                        });
                     }
 
                     @Override
                     public void onDone() {
-                        finish(null);
+                        onRequest(request, () -> finish(null));
                     }
 
                     @Override
                     public void onError(@NotNull String message) {
-                        finish(message);
+                        onRequest(request, () -> finish(message));
                     }
                 });
     }
 
-    private void finish(String error) {
+    private void onRequest(long request, Runnable update) {
         SwingUtilities.invokeLater(() -> {
-            streaming = false;
-            sendButton.setEnabled(true);
-            stopButton.setEnabled(false);
-            if (error != null) {
-                transcript.append("\n[error] " + error + "\n");
-            } else if (currentAnswer.length() > 0) {
-                history.add(ColibriClient.message("assistant", currentAnswer.toString()));
-            }
-            transcript.append("\n\n");
-            transcript.setCaretPosition(transcript.getDocument().getLength());
-            refreshStatus();
+            if (!disposed && !project.isDisposed() && streaming && request == generation) update.run();
         });
     }
 
+    private void finish(String error) {
+        streaming = false;
+        activeStream = null;
+        sendButton.setEnabled(true);
+        stopButton.setEnabled(false);
+        if (error != null) {
+            append("\n[error] " + error + "\n");
+            // Do not send an unanswered/cancelled turn as history on the next request.
+            if (!history.isEmpty()) history.remove(history.size() - 1);
+        } else if (currentAnswer.length() > 0) {
+            history.add(ColibriClient.message("assistant", currentAnswer.toString()));
+        }
+        currentAnswer.setLength(0);
+        append("\n\n");
+        refreshStatus();
+    }
+
     private void stop() {
-        Thread t = activeStream;
-        if (t != null) t.interrupt();
+        if (!streaming) return;
+        ++generation; // Invalidate already queued EDT callbacks before cancelling I/O.
+        if (activeStream != null) activeStream.cancel();
         finish("stopped by user");
     }
 
     private void append(String text) {
-        SwingUtilities.invokeLater(() -> {
-            transcript.append(text);
-            transcript.setCaretPosition(transcript.getDocument().getLength());
-        });
+        transcript.append(text);
+        transcript.setCaretPosition(transcript.getDocument().getLength());
     }
 }
