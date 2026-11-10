@@ -55,12 +55,23 @@ the engine starts on the first prompt and goes away when Air closes the session.
 | engine root | — | `COLIBRI_HOME` | `engine_root` |
 | launcher | `--launcher` | — | `<engine_root>/c/coli` |
 | policy / ctx | `--policy`, `--ctx` | — | `policy`, `ctx` |
+| backend | `--backend` | `COLIBRI_BACKEND` | `backend` |
 | API key | — | `COLIBRI_API_KEY` / `COLI_API_KEY` | never stored (local default) |
 | ACP model id | `--model-id` | `OPENAI_MODEL` | first id from `/v1/models` |
 
 The shared config is `~/.colibri/config.json` (or `COLIBRI_CONFIG`). Only a
 loopback `http` origin is accepted for auto-start; remote servers must be
 configured directly in the ACP environment.
+
+### GPU backend
+
+`coli serve` has no `--backend` flag: the engine picks its backend from
+`COLI_VULKAN`, `COLI_CUDA` and `COLI_METAL` (`=1` on, `=0` off). When the
+resolved backend is not `auto`, the bridge sets all three variables explicitly
+(the chosen one to `1`, the rest to `0`) before spawning the engine, so a
+configured GPU is actually used. With `auto` the engine keeps its own default
+(CPU+SSD), which is why the log line `[VK] … COLI_VULKAN is not set` appears.
+The desktop app and this bridge share the same `backend` setting.
 
 ## Check it
 

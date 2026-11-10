@@ -13,8 +13,12 @@ AIR = Path(__file__).resolve().parent.parent
 BRIDGE = AIR / "colibri-acp.py"
 
 FAKE_ENGINE = r'''
-import argparse, json
+import argparse, json, os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+if os.environ.get("FAKE_ENGINE_ENV"):
+    with open(os.environ["FAKE_ENGINE_ENV"], "w", encoding="utf-8") as fh:
+        json.dump({k: os.environ.get(k) for k in ("COLI_VULKAN", "COLI_CUDA", "COLI_METAL")}, fh)
 
 ap = argparse.ArgumentParser()
 ap.add_argument("serve", nargs="?")
@@ -69,13 +73,15 @@ def port_open(port):
         return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
-def bridge_env(tmp):
+def bridge_env(tmp, **overrides):
     env = dict(os.environ)
     for key in ("COLIBRI_ENGINE_URL", "COLIBRI_CONFIG", "COLIBRI_API_KEY", "COLI_API_KEY",
-                "COLIBRI_MODEL", "COLIBRI_PYTHON", "COLIBRI_HOME", "OPENAI_MODEL"):
+                "COLIBRI_MODEL", "COLIBRI_PYTHON", "COLIBRI_HOME", "OPENAI_MODEL",
+                "COLIBRI_BACKEND", "COLI_VULKAN", "COLI_CUDA", "COLI_METAL"):
         env.pop(key, None)
     env.update(COLIBRI_CONFIG=str(Path(tmp) / "missing.json"), TEMP=str(tmp), TMP=str(tmp),
                ACP_PROBE=str(Path(tmp) / "probe.json"), COLIBRI_ACP_TIMEOUT="30")
+    env.update(overrides)
     return env
 
 
@@ -89,12 +95,12 @@ class BridgeTests(unittest.TestCase):
         self.fake = self.dir / "fake_engine.py"
         self.fake.write_text(FAKE_ENGINE, encoding="utf-8")
 
-    def run_bridge(self, *extra, port):
+    def run_bridge(self, *extra, port, env=None):
         return subprocess.run(
             [sys.executable, str(BRIDGE), "--engine-url", f"http://127.0.0.1:{port}",
              "--model", str(self.model), "--python", sys.executable,
              "--launcher", str(self.fake), *extra],
-            env=bridge_env(self.dir), capture_output=True, text=True, timeout=90)
+            env=env or bridge_env(self.dir), capture_output=True, text=True, timeout=90)
 
     def test_check_reports_a_silent_endpoint(self):
         result = self.run_bridge("--check", port=free_port())
@@ -114,6 +120,34 @@ class BridgeTests(unittest.TestCase):
         while port_open(port) and time.monotonic() < deadline:
             time.sleep(0.1)
         self.assertFalse(port_open(port), "the bridge must stop the engine it started")
+
+    def spawn_env(self, *extra, env=None):
+        port = free_port()
+        dump = self.dir / "engine_env.json"
+        result = self.run_bridge(*extra, port=port,
+                                 env=bridge_env(self.dir, FAKE_ENGINE_ENV=str(dump), **(env or {})))
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertTrue(dump.is_file(), result.stderr)
+        return json.loads(dump.read_text(encoding="utf-8"))
+
+    def test_backend_flag_sets_engine_environment(self):
+        data = self.spawn_env("--backend", "vulkan", "--", sys.executable, "-c", PROBE)
+        self.assertEqual(data, {"COLI_VULKAN": "1", "COLI_CUDA": "0", "COLI_METAL": "0"})
+
+    def test_backend_comes_from_shared_config(self):
+        cfg = self.dir / "config.json"
+        cfg.write_text(json.dumps({"backend": "metal"}), encoding="utf-8")
+        data = self.spawn_env("--", sys.executable, "-c", PROBE, env={"COLIBRI_CONFIG": str(cfg)})
+        self.assertEqual(data, {"COLI_VULKAN": "0", "COLI_CUDA": "0", "COLI_METAL": "1"})
+
+    def test_auto_backend_leaves_engine_default_untouched(self):
+        data = self.spawn_env("--", sys.executable, "-c", PROBE)
+        self.assertEqual(data, {"COLI_VULKAN": None, "COLI_CUDA": None, "COLI_METAL": None})
+
+    def test_invalid_backend_is_rejected(self):
+        result = self.run_bridge("--backend", "quantum", "--check", port=free_port())
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("backend must be", result.stderr)
 
     def test_attached_engine_is_never_stopped(self):
         port = free_port()

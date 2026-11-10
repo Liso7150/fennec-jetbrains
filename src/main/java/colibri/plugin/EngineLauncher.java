@@ -77,6 +77,7 @@ public final class EngineLauncher {
                     new File(System.getProperty("java.io.tmpdir"), "colibri-plugin-engine.log")));
             pb.environment().putIfAbsent("PYTHONIOENCODING", "utf-8");
             pb.environment().putIfAbsent("PYTHONUTF8", "1");
+            applyBackend(pb.environment(), cfg.backend);
             process = pb.start();
             report(status, "starting engine (first load can take minutes)…");
             return true;
@@ -152,6 +153,16 @@ public final class EngineLauncher {
 
     public static boolean isRunning() {
         return process != null && process.isAlive();
+    }
+
+    /** serve has no --backend flag: the engine reads COLI_VULKAN / COLI_CUDA / COLI_METAL. */
+    private static void applyBackend(java.util.Map<String, String> env, @Nullable String backend) {
+        if (backend == null || backend.isBlank() || "auto".equalsIgnoreCase(backend)) return;
+        String name = backend.trim().toLowerCase(java.util.Locale.ROOT);
+        env.put("COLI_VULKAN", "0");
+        env.put("COLI_CUDA", "0");
+        env.put("COLI_METAL", "0");
+        env.put("COLI_" + name.toUpperCase(java.util.Locale.ROOT), "1");
     }
 
     private static boolean isLoopback(String host) {

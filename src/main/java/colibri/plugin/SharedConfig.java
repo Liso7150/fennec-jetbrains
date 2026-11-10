@@ -21,16 +21,18 @@ final class SharedConfig {
     final String engineUrl;
     final String apiKey;
     final String policy;
+    final String backend;
     final int ctx;
 
     private SharedConfig(String engineRoot, String python, String model, String engineUrl, String apiKey,
-                         String policy, int ctx) {
+                         String policy, String backend, int ctx) {
         this.engineRoot = engineRoot;
         this.python = python;
         this.model = model;
         this.engineUrl = engineUrl;
         this.apiKey = apiKey;
         this.policy = policy;
+        this.backend = backend;
         this.ctx = ctx;
     }
 
@@ -77,6 +79,10 @@ final class SharedConfig {
         if (!Set.of("quality", "balanced", "experimental-fast").contains(policy)) {
             throw new IllegalArgumentException("Colibri configuration policy must be quality, balanced or experimental-fast");
         }
+        String backend = value(data, env, "backend", "COLIBRI_BACKEND", "auto").trim().toLowerCase(Locale.ROOT);
+        if (!Set.of("auto", "vulkan", "cuda", "metal", "cpu").contains(backend)) {
+            throw new IllegalArgumentException("Colibri configuration backend must be auto, vulkan, cuda, metal or cpu");
+        }
         int ctx = 0;
         JsonElement ctxValue = data.get("ctx");
         if (ctxValue != null) {
@@ -88,7 +94,7 @@ final class SharedConfig {
                 throw new IllegalArgumentException("Colibri configuration ctx must be 0..1048576");
             }
         }
-        return new SharedConfig(root.toString(), python, model, url.replaceAll("/+$", ""), key, policy, ctx);
+        return new SharedConfig(root.toString(), python, model, url.replaceAll("/+$", ""), key, policy, backend, ctx);
     }
 
     private static String value(JsonObject data, Map<String, String> env, String key, String variable, String fallback) {

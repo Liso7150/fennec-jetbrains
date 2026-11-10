@@ -90,9 +90,12 @@ def engine_settings(args, cfg):
         "python": str(python),
         "launcher": str(args.launcher or engine_root / "c" / "coli"),
         "policy": args.policy or cfg.get("policy") or "balanced",
+        "backend": str(args.backend or os.environ.get("COLIBRI_BACKEND") or cfg.get("backend") or "auto").strip().lower(),
         "ctx": args.ctx if args.ctx is not None else int(cfg.get("ctx") or 0),
         "api_key": os.environ.get("COLIBRI_API_KEY") or os.environ.get("COLI_API_KEY") or "local",
     }
+    if settings["backend"] not in ("auto", "vulkan", "cuda", "metal", "cpu"):
+        raise SystemExit("backend must be auto, vulkan, cuda, metal or cpu")
     settings["model_id"] = args.model_id or os.environ.get("OPENAI_MODEL") or ""
     return settings
 
@@ -129,7 +132,12 @@ def start_engine(settings):
            "--api-key", settings["api_key"]]
     log_file = Path(os.environ.get("TEMP") or os.environ.get("TMPDIR") or "/tmp") / "colibri-acp-engine.log"
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
-    log(f"starting local engine on {settings['origin']} (log: {log_file})")
+    backend = settings.get("backend") or "auto"
+    if backend != "auto":
+        # serve has no --backend flag; the engine reads these variables at startup.
+        env.update(COLI_VULKAN="0", COLI_CUDA="0", COLI_METAL="0")
+        env["COLI_" + backend.upper()] = "1"
+    log(f"starting local engine on {settings['origin']} (backend {backend}, log: {log_file})")
     with open(log_file, "ab") as stream:
         return subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
                                 env=env, start_new_session=os.name != "nt")
@@ -181,6 +189,7 @@ def parser():
     ap.add_argument("--python", help="Python runtime for the engine (defaults to <engine_root>/.venv)")
     ap.add_argument("--launcher", help="engine launcher path (defaults to <engine_root>/c/coli)")
     ap.add_argument("--policy")
+    ap.add_argument("--backend", help="engine backend for on-demand starts: auto, vulkan, cuda, metal or cpu")
     ap.add_argument("--ctx", type=int)
     ap.add_argument("--check", action="store_true", help="report engine status without starting it or any agent")
     ap.add_argument("acp", nargs=argparse.REMAINDER, help="ACP agent command after --")

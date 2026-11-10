@@ -28,6 +28,7 @@ public class ColibriSettings implements PersistentStateComponent<ColibriSettings
         public String python = "";
         public String runtime = "";
         public String policy = "";
+        public String backend = "";
         public int ctx = -1;
         public boolean autoStart = false;
         public int maxTokens = 4096;
@@ -66,6 +67,7 @@ public class ColibriSettings implements PersistentStateComponent<ColibriSettings
         resolved.python = override(raw.python, shared.python);
         resolved.runtime = override(raw.runtime, shared.engineRoot + File.separator + "c");
         resolved.policy = raw.policy != null && !raw.policy.isBlank() ? raw.policy : shared.policy;
+        resolved.backend = raw.backend != null && !raw.backend.isBlank() ? raw.backend : shared.backend;
         resolved.ctx = raw.ctx >= 0 ? raw.ctx : shared.ctx;
         resolved.autoStart = raw.autoStart;
         resolved.maxTokens = raw.maxTokens;
