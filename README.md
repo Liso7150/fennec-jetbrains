@@ -32,7 +32,7 @@ actions.
 ## Build
 
 ```bash
-./build-plugin.sh    # compiles against the IDE JBR, outputs build/ColibriCode-plugin-1.3.1.zip
+./build-plugin.sh    # compiles against the IDE JBR, outputs build/ColibriCode-plugin-1.3.2.zip
 ```
 
 Install the zip via *Settings → Plugins → ⚙ → Install Plugin from Disk* and
@@ -51,10 +51,14 @@ idle engine stays loaded. `0` disables the idle stop.
 ## Engine lifecycle
 
 The engine is local and lazy. While no prompt has arrived, no engine process
-exists at all. The first prompt starts `coli serve` on the configured loopback
-URL; the bridge proxies OpenAI-compatible traffic (including SSE streaming) to
-it. After the idle timeout the bridge stops the engine it started; the next
-prompt starts a fresh one. If Air or the bridge is killed hard, the next
+exists at all. The bridge itself listens on the configured loopback URL (the
+one Qwen Code and Air are pointed at), answers `/v1/models` from memory, and on
+the first prompt starts `coli serve` on a separate loopback port of its own
+choosing, proxying OpenAI-compatible traffic (including SSE streaming) to it.
+Streaming chat responses get their SSE headers immediately and periodic empty
+chunks while the engine prefills, so a slow first token does not trip client
+timeouts. After the idle timeout the bridge stops the engine it started; the
+next prompt starts a fresh one. If Air or the bridge is killed hard, the next
 bridge adopts the engine left behind and stops it when idle. Every model,
 cache and log file stays on this machine; the plugin never contacts a remote
 service.

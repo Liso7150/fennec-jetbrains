@@ -53,7 +53,7 @@ final class AirAgentRegistrar {
     private static final String AIR_PLUGIN_ID = "com.intellij.air";
     private static final String PLUGIN_ID = "desktop.colibri.ide";
     private static final String REGISTRY_PROPERTY = "air.acp.registry.path";
-    private static final String FALLBACK_VERSION = "1.3.1";
+    private static final String FALLBACK_VERSION = "1.3.2";
 
     private AirAgentRegistrar() {}
 
