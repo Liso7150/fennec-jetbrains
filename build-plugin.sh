@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the Colibri Code IDE plugin without Gradle.
+# Builds the Fennec Desktop IDE plugin without Gradle.
 #
 # Compiles against an installed IntelliJ Platform (263.x) so the artefact always
 # matches a real IDE on this machine, then packages a standard plugin zip that
@@ -7,14 +7,14 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLATFORM="${COLIBRI_IDE_PLATFORM:-C:/Program Files/JetBrains/RustRover 2026.3}"
+PLATFORM="${FENNEC_IDE_PLATFORM:-C:/Program Files/JetBrains/RustRover 2026.3}"
 OUT="$HERE/build"
 CLASSES="$OUT/classes"
-DIST="$OUT/colibri-code"
+DIST="$OUT/fennec-desktop"
 
 if [ ! -d "$PLATFORM/lib" ]; then
   echo "IntelliJ Platform not found at: $PLATFORM" >&2
-  echo "Set COLIBRI_IDE_PLATFORM to a JetBrains IDE installation directory." >&2
+  echo "Set FENNEC_IDE_PLATFORM to a JetBrains IDE installation directory." >&2
   exit 1
 fi
 
@@ -42,23 +42,23 @@ cd "$HERE"
 
 cp -r "$HERE/src/main/resources/." "$CLASSES/"
 
-# The Air bridge is a resource the plugin installs into ~/.colibri/air.
-mkdir -p "$CLASSES/colibri/air"
-cp "$HERE/air/colibri-acp.py" "$CLASSES/colibri/air/colibri-acp.py"
+# The Air bridge is a resource the plugin installs into ~/.fennec/air.
+mkdir -p "$CLASSES/fennec/air"
+cp "$HERE/air/fennec-acp.py" "$CLASSES/fennec/air/fennec-acp.py"
 
-"$JAR" --create --file "$DIST/lib/colibri-code.jar" -C "$CLASSES" .
+"$JAR" --create --file "$DIST/lib/fennec-desktop.jar" -C "$CLASSES" .
 
 mkdir -p "$DIST/META-INF"
 cat > "$OUT/plugin-zip-note.txt" <<'NOTE'
-Colibri Code plugin for IntelliJ-based IDEs (build 263.x).
+Fennec Desktop plugin for IntelliJ-based IDEs (build 263.x).
 Install with: Settings -> Plugins -> gear -> Install Plugin from Disk.
 NOTE
 cp "$OUT/plugin-zip-note.txt" "$DIST/README.txt"
 
 VERSION="$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' "$HERE/src/main/resources/META-INF/plugin.xml" | head -n1)"
-ZIP="$OUT/ColibriCode-plugin-$VERSION.zip"
-( cd "$OUT" && "$JAR" --create --file "$ZIP" -C "$OUT" colibri-code )
+ZIP="$OUT/FennecDesktop-plugin-$VERSION.zip"
+( cd "$OUT" && "$JAR" --create --file "$ZIP" -C "$OUT" fennec-desktop )
 
-echo "jar:  $DIST/lib/colibri-code.jar"
+echo "jar:  $DIST/lib/fennec-desktop.jar"
 echo "zip:  $ZIP"
 ls -la "$ZIP"

@@ -1,7 +1,7 @@
-# Colibri ACP bridge for JetBrains Air
+# Fennec ACP bridge for JetBrains Air
 
 JetBrains Air talks to agents over the Agent Client Protocol (stdio). This
-stdlib-only bridge makes Colibri work there while keeping model memory off
+stdlib-only bridge makes Fennec work there while keeping model memory off
 until it is actually needed:
 
 1. starts the real ACP agent (Qwen Code) with `OPENAI_BASE_URL`,
@@ -21,8 +21,8 @@ the loopback interface.
 
 ## Where it comes from
 
-The Colibri IDE plugin installs this file as `~/.colibri/air/colibri-acp.py`
-and writes the `Colibri` entry in `~/.jetbrains/acp.json` for you. Running the
+The Fennec IDE plugin installs this file as `~/.fennec/air/fennec-acp.py`
+and writes the `Fennec` entry in `~/.jetbrains/acp.json` for you. Running the
 bridge from this checkout by hand also works; see below.
 
 ## Configure JetBrains Air by hand
@@ -34,9 +34,9 @@ absolute paths are required:
 {
   "agent_servers": {
     "Colibri": {
-      "command": "C:/Users/you/Colibri/.venv/Scripts/python.exe",
+      "command": "C:/Users/you/Fennec/.venv/Scripts/python.exe",
       "args": [
-        "C:/Users/you/.colibri/air/colibri-acp.py",
+        "C:/Users/you/.fennec/air/fennec-acp.py",
         "--",
         "C:/Users/you/AppData/Local/qwen-code/qwen-code/node/node.exe",
         "C:/Users/you/AppData/Local/qwen-code/qwen-code/lib/cli-entry.js",
@@ -47,7 +47,7 @@ absolute paths are required:
 }
 ```
 
-Restart Air after saving. Colibri appears in Air's agent menu. (Air's Agents
+Restart Air after saving. Fennec appears in Air's agent menu. (Air's Agents
 page cards come from JetBrains' remote registry; custom ACP servers appear in
 the agent selector, not as cards.)
 
@@ -55,18 +55,18 @@ the agent selector, not as cards.)
 
 | Setting | Flags | Environment | Shared config |
 |---|---|---|---|
-| engine URL | `--engine-url` | `COLIBRI_ENGINE_URL` | `engine_url` |
-| model dir | `--model` | `COLIBRI_MODEL` | `model` |
-| Python | `--python` | `COLIBRI_PYTHON` | `python` |
-| engine root | — | `COLIBRI_HOME` | `engine_root` |
+| engine URL | `--engine-url` | `FENNEC_ENGINE_URL` | `engine_url` |
+| model dir | `--model` | `FENNEC_MODEL` | `model` |
+| Python | `--python` | `FENNEC_PYTHON` | `python` |
+| engine root | — | `FENNEC_HOME` | `engine_root` |
 | launcher | `--launcher` | — | `<engine_root>/c/coli` |
 | policy / ctx | `--policy`, `--ctx` | — | `policy`, `ctx` |
-| backend | `--backend` | `COLIBRI_BACKEND` | `backend` |
-| idle stop | `--idle-timeout` | `COLIBRI_ACP_IDLE_TIMEOUT` | `idle_timeout` |
-| API key | — | `COLIBRI_API_KEY` / `COLI_API_KEY` | never stored (local default) |
+| backend | `--backend` | `FENNEC_BACKEND` | `backend` |
+| idle stop | `--idle-timeout` | `FENNEC_ACP_IDLE_TIMEOUT` | `idle_timeout` |
+| API key | — | `FENNEC_API_KEY` / `COLI_API_KEY` | never stored (local default) |
 | ACP model id | `--model-id` | `OPENAI_MODEL` | `model_id`, else derived |
 
-The shared config is `~/.colibri/config.json` (or `COLIBRI_CONFIG`). Only a
+The shared config is `~/.fennec/config.json` (or `FENNEC_CONFIG`). Only a
 loopback `http` origin is accepted for auto-start; remote servers must be
 configured directly in the ACP environment.
 
@@ -89,13 +89,13 @@ The desktop app and this bridge share the same `backend` setting.
 ## Check it
 
 ```bash
-python colibri-acp.py --check
+python fennec-acp.py --check
 ```
 
 prints the engine endpoint, model ids and idle timeout, or exits 1 when
 nothing is listening. `--check` never starts an engine. The engine log for
-on-demand starts is `<TEMP>/colibri-acp-engine.log`; leases live next to the
-managed bridge in `~/.colibri/air/`.
+on-demand starts is `<TEMP>/fennec-acp-engine.log`; leases live next to the
+managed bridge in `~/.fennec/air/`.
 
 ## Tests
 

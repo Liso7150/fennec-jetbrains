@@ -1,4 +1,4 @@
-package colibri.plugin;
+package fennec.plugin;
 
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
@@ -31,7 +31,7 @@ import java.util.logging.Logger;
 import java.util.stream.Stream;
 
 /**
- * Publishes Colibri as an agent card in Air's agent catalog.
+ * Publishes Fennec as an agent card in Air's agent catalog.
  *
  * Air builds its Agents page from the external ACP registry, not from
  * acp.json (entries there only appear in the session agent picker). A local
@@ -43,17 +43,19 @@ import java.util.stream.Stream;
  * refresh its own cached registry at any time.
  */
 final class AirAgentRegistrar {
-    private static final Logger LOG = Logger.getLogger("colibri.air");
+    private static final Logger LOG = Logger.getLogger("fennec.air");
     private static final AtomicBoolean STARTED = new AtomicBoolean();
 
-    private static final String AGENT_ID = "colibri";
+    private static final String AGENT_ID = "fennec";
     private static final String INSTALL_KEY = "acp.registry." + AGENT_ID;
-    private static final String AGENT_NAME = "Colibri Code";
-    private static final String REPOSITORY = "https://github.com/Liso7150/colibri-jetbrains";
+    // Pre-rebrand releases published under this key; leaving it behind shows a second, dead card.
+    private static final String LEGACY_INSTALL_KEY = "acp.registry.colibri";
+    private static final String AGENT_NAME = "Fennec Desktop";
+    private static final String REPOSITORY = "https://github.com/Liso7150/fennec-jetbrains";
     private static final String AIR_PLUGIN_ID = "com.intellij.air";
-    private static final String PLUGIN_ID = "desktop.colibri.ide";
+    private static final String PLUGIN_ID = "com.fennec.ide";
     private static final String REGISTRY_PROPERTY = "air.acp.registry.path";
-    private static final String FALLBACK_VERSION = "1.3.2";
+    private static final String FALLBACK_VERSION = "1.4.0";
 
     private AirAgentRegistrar() {}
 
@@ -61,7 +63,7 @@ final class AirAgentRegistrar {
         if (!STARTED.compareAndSet(false, true)) return;
         try {
             if (!airAvailable()) {
-                LOG.info("Air is not installed in this IDE; the Colibri agent is not registered");
+                LOG.info("Air is not installed in this IDE; the Fennec agent is not registered");
                 return;
             }
             register(Path.of(System.getProperty("user.home")),
@@ -70,32 +72,32 @@ final class AirAgentRegistrar {
                     Path.of(PathManager.getSystemPath()),
                     pluginVersion());
         } catch (IOException | RuntimeException e) {
-            LOG.log(Level.WARNING, "Colibri Air agent registration failed: " + e.getMessage(), e);
+            LOG.log(Level.WARNING, "Fennec Air agent registration failed: " + e.getMessage(), e);
         }
     }
 
     static void register(Path home, Path configDir, Path commonDataDir, Path systemDir, String version) throws IOException {
-        Path bridge = home.resolve(".colibri").resolve("air").resolve("colibri-acp.py");
+        Path bridge = home.resolve(".fennec").resolve("air").resolve("fennec-acp.py");
         installBridge(bridge);
         removeLegacyPickerEntry(home, bridge);
 
         Launch launch = detectAgent();
         if (launch == null) {
-            LOG.warning("Colibri Air agent not published: no ACP agent command found. "
-                    + "Install Qwen Code or put its command into the Colibri registry entry.");
+            LOG.warning("Fennec Air agent not published: no ACP agent command found. "
+                    + "Install Qwen Code or put its command into the Fennec registry entry.");
             return;
         }
 
         JsonObject agent = registryEntry(version);
-        Path registry = home.resolve(".colibri").resolve("air").resolve("registry.json");
+        Path registry = home.resolve(".fennec").resolve("air").resolve("registry.json");
         if (buildRegistry(registry, agent, systemDir)) {
             String registryPath = registry.toString().replace('\\', '/');
             System.setProperty(REGISTRY_PROPERTY, registryPath);
             ensureRegistryVmOption(configDir, registryPath);
-            LOG.info("Colibri registry published at " + registry + " (" + registryPath + ")");
+            LOG.info("Fennec registry published at " + registry + " (" + registryPath + ")");
         } else {
             LOG.warning("No cached Air registry found at " + systemDir.resolve("acp-agents")
-                    + " and no previous Colibri registry to extend; leaving Air's catalog untouched");
+                    + " and no previous Fennec registry to extend; leaving Air's catalog untouched");
         }
 
         writeInstalled(commonDataDir, agent);
@@ -125,12 +127,12 @@ final class AirAgentRegistrar {
         entry.addProperty("name", AGENT_NAME);
         entry.addProperty("version", version);
         entry.addProperty("description",
-                "Coding agent backed by the Colibri model on this machine. "
+                "Coding agent backed by the Fennec model on this machine. "
                         + "The engine starts with the first prompt and stops after it has been idle.");
         entry.addProperty("website", REPOSITORY);
         entry.addProperty("repository", REPOSITORY);
         JsonArray authors = new JsonArray();
-        authors.add("Colibri Desktop");
+        authors.add("Fennec Desktop");
         entry.add("authors", authors);
         entry.addProperty("license", "proprietary");
         entry.add("distribution", new JsonObject());
@@ -140,7 +142,7 @@ final class AirAgentRegistrar {
 
     /**
      * Air's registry override replaces the whole catalog, so the cached
-     * remote registry is merged with the Colibri entry instead of replaced.
+     * remote registry is merged with the Fennec entry instead of replaced.
      */
     private static boolean buildRegistry(Path target, JsonObject agent, Path systemDir) throws IOException {
         JsonObject base = readNewestCachedRegistry(systemDir.resolve("acp-agents"));
@@ -148,7 +150,7 @@ final class AirAgentRegistrar {
             try {
                 base = readJson(target);
             } catch (IOException e) {
-                LOG.warning("Ignoring the previous Colibri registry: " + e.getMessage());
+                LOG.warning("Ignoring the previous Fennec registry: " + e.getMessage());
             }
         }
         if (base == null) return false;
@@ -205,9 +207,10 @@ final class AirAgentRegistrar {
 
         JsonObject agents = object(root, "agents");
         agents.add(INSTALL_KEY, entry);
+        agents.remove(LEGACY_INSTALL_KEY);
         root.add("agents", agents);
         try {
-            if (writeJsonIfChanged(file, root)) LOG.info("Colibri launch overlay updated in " + file);
+            if (writeJsonIfChanged(file, root)) LOG.info("Fennec launch overlay updated in " + file);
         } catch (IOException e) {
             LOG.warning("Could not write " + file + ": " + e.getMessage());
         }
@@ -243,6 +246,7 @@ final class AirAgentRegistrar {
         record.addProperty("autoUpdatePolicy", "DEFAULT");
         record.add("skippedVersion", JsonNull.INSTANCE);
         agents.add(INSTALL_KEY, record);
+        agents.remove(LEGACY_INSTALL_KEY);
         root.add("agents", agents);
         if (!root.has("disabledAgents") || !root.get("disabledAgents").isJsonArray()) {
             root.add("disabledAgents", new JsonArray());
@@ -252,7 +256,7 @@ final class AirAgentRegistrar {
         }
 
         try {
-            if (writeJsonIfChanged(file, root)) LOG.info("Colibri recorded as installed in " + file);
+            if (writeJsonIfChanged(file, root)) LOG.info("Fennec recorded as installed in " + file);
         } catch (IOException e) {
             LOG.warning("Could not write " + file + ": " + e.getMessage());
         }
@@ -312,20 +316,21 @@ final class AirAgentRegistrar {
 
     private static void installBridge(Path target) throws IOException {
         byte[] content;
-        try (InputStream in = AirAgentRegistrar.class.getResourceAsStream("/colibri/air/colibri-acp.py")) {
-            if (in == null) throw new IOException("colibri-acp.py is missing from the plugin");
+        try (InputStream in = AirAgentRegistrar.class.getResourceAsStream("/fennec/air/fennec-acp.py")) {
+            if (in == null) throw new IOException("fennec-acp.py is missing from the plugin");
             content = in.readAllBytes();
         }
         if (Files.isRegularFile(target) && Arrays.equals(Files.readAllBytes(target), content)) return;
         Files.createDirectories(target.getParent());
         Files.write(target, content);
-        LOG.info("Installed the Colibri bridge at " + target);
+        LOG.info("Installed the Fennec bridge at " + target);
     }
 
     /**
-     * 1.3.0 registered itself through acp.json; such an entry would linger in
-     * Air's picker next to the registry card. Only entries that point at the
-     * managed bridge are removed - other custom agents are left alone.
+     * 1.3.0 registered itself through acp.json under the pre-rebrand name
+     * "Colibri"; such an entry would linger in Air's picker next to the registry
+     * card. Only entries that point at the managed bridge are removed - other
+     * custom agents are left alone.
      */
     private static void removeLegacyPickerEntry(Path home, Path bridge) {
         Path file = home.resolve(".jetbrains").resolve("acp.json");
@@ -487,7 +492,7 @@ final class AirAgentRegistrar {
 
     private static void backupOnce(Path file) {
         if (!Files.exists(file)) return;
-        Path backup = file.resolveSibling(file.getFileName() + ".bak-colibri");
+        Path backup = file.resolveSibling(file.getFileName() + ".bak-fennec");
         if (Files.exists(backup)) return;
         try {
             Files.copy(file, backup, StandardCopyOption.REPLACE_EXISTING);
@@ -498,7 +503,7 @@ final class AirAgentRegistrar {
 
     private static void writeJson(Path file, JsonObject root) throws IOException {
         Files.createDirectories(file.getParent());
-        Path temp = file.resolveSibling(file.getFileName() + ".tmp-colibri");
+        Path temp = file.resolveSibling(file.getFileName() + ".tmp-fennec");
         String text = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(root)
                 + System.lineSeparator();
         Files.writeString(temp, text, StandardCharsets.UTF_8);

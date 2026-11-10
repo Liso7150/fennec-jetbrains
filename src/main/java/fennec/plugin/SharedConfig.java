@@ -1,4 +1,4 @@
-package colibri.plugin;
+package fennec.plugin;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -11,21 +11,21 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
 
-/** The shared Colibri configuration Air needs: where the engine's Python lives. */
+/** The shared Fennec configuration Air needs: where the engine's Python lives. */
 final class SharedConfig {
     private SharedConfig() {}
 
     static String pythonForBridge() {
         Path home = Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
-        String configured = env("COLIBRI_CONFIG");
-        Path location = configured != null ? resolve(configured, home) : home.resolve(".colibri/config.json");
+        String configured = env("FENNEC_CONFIG");
+        Path location = configured != null ? resolve(configured, home) : home.resolve(".fennec/config.json");
         JsonObject data = read(location);
-        String rootValue = env("COLIBRI_HOME");
-        if (rootValue == null) rootValue = env("COLIBRI_ENGINE_ROOT");
+        String rootValue = env("FENNEC_HOME");
+        if (rootValue == null) rootValue = env("FENNEC_ENGINE_ROOT");
         if (rootValue == null) rootValue = text(data, "engine_root", home.resolve("Colibri").toString());
         Path root = resolve(rootValue, home);
         Path venv = root.resolve(isWindows() ? ".venv/Scripts/python.exe" : ".venv/bin/python");
-        String python = env("COLIBRI_PYTHON");
+        String python = env("FENNEC_PYTHON");
         if (python == null) {
             python = text(data, "python",
                     Files.isRegularFile(venv) ? venv.toString() : isWindows() ? "python.exe" : "python3");
@@ -42,19 +42,19 @@ final class SharedConfig {
 
     private static JsonObject read(Path location) {
         if (!Files.exists(location)) {
-            if (env("COLIBRI_CONFIG") != null) {
-                throw new IllegalArgumentException("Colibri configuration does not exist: " + location);
+            if (env("FENNEC_CONFIG") != null) {
+                throw new IllegalArgumentException("Fennec configuration does not exist: " + location);
             }
             return new JsonObject();
         }
         try (Reader reader = Files.newBufferedReader(location, StandardCharsets.UTF_8)) {
             JsonElement parsed = JsonParser.parseReader(reader);
             if (!parsed.isJsonObject()) {
-                throw new IllegalArgumentException("Colibri configuration must be a JSON object: " + location);
+                throw new IllegalArgumentException("Fennec configuration must be a JSON object: " + location);
             }
             return parsed.getAsJsonObject();
         } catch (IOException | RuntimeException e) {
-            throw new IllegalArgumentException("Cannot read Colibri configuration: " + location, e);
+            throw new IllegalArgumentException("Cannot read Fennec configuration: " + location, e);
         }
     }
 
@@ -62,7 +62,7 @@ final class SharedConfig {
         JsonElement value = data.get(key);
         if (value == null) return fallback;
         if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
-            throw new IllegalArgumentException("Colibri configuration field must be a string: " + key);
+            throw new IllegalArgumentException("Fennec configuration field must be a string: " + key);
         }
         return value.getAsString();
     }

@@ -1,22 +1,22 @@
-# Colibri for JetBrains
+# Fennec for JetBrains
 
-A dependency-free [Colibri](https://github.com/JustVugg/colibri) plugin for
-JetBrains Air. It has no tool window of its own: it publishes **Colibri Code**
-as an agent card in Air and manages the ACP bridge behind it. Everything runs
-on this machine.
+A dependency-free Fennec plugin for JetBrains Air, built around the engine idea
+from [Colibri](https://github.com/JustVugg/colibri). It has no tool window of its
+own: it publishes **Fennec Desktop** as an agent card in Air and manages the ACP
+bridge behind it. Everything runs on this machine.
 
 ## What it does
 
-- Installs the managed bridge at `~/.colibri/air/colibri-acp.py`.
-- Merges a `colibri` entry into a Colibri-owned copy of Air's agent registry at
-  `~/.colibri/air/registry.json` and points Air at it with the
+- Installs the managed bridge at `~/.fennec/air/fennec-acp.py`.
+- Merges a `fennec` entry into a Fennec-owned copy of Air's agent registry at
+  `~/.fennec/air/registry.json` and points Air at it with the
   `air.acp.registry.path` system property in the IDE's user `.vmoptions` file.
   Air's cached registry is the base, so every built-in agent stays visible.
 - Registers the bridge's launch command in `~/.jetbrains/acp-registry-installed-overlay.json`
-  and marks Colibri installed in Air's shared `installed.json`. That is what
-  gives Colibri a real card with install/enable/disable controls on Air's
+  and marks Fennec installed in Air's shared `installed.json`. That is what
+  gives Fennec a real card with install/enable/disable controls on Air's
   Agents page.
-- Removes the old `Colibri` entry that 1.3.0 wrote into `~/.jetbrains/acp.json`
+- Removes the old `Fennec` entry that 1.3.0 wrote into `~/.jetbrains/acp.json`
   (only when it points at the managed bridge). Other custom agents are never
   touched.
 - The engine starts on the first prompt, not when Air opens. An engine the
@@ -32,16 +32,16 @@ actions.
 ## Build
 
 ```bash
-./build-plugin.sh    # compiles against the IDE JBR, outputs build/ColibriCode-plugin-1.3.2.zip
+./build-plugin.sh    # compiles against the IDE JBR, outputs build/FennecDesktop-plugin-1.3.2.zip
 ```
 
 Install the zip via *Settings → Plugins → ⚙ → Install Plugin from Disk* and
-restart the IDE. Colibri Code then appears on Air's Agents page.
+restart the IDE. Fennec Desktop then appears on Air's Agents page.
 
 ## Configure
 
-The bridge reads the suite configuration (`~/.colibri/config.json` or
-`$COLIBRI_CONFIG`, plus `COLIBRI_*` variables) that the desktop app, CLI and
+The bridge reads the suite configuration (`~/.fennec/config.json` or
+`$FENNEC_CONFIG`, plus `FENNEC_*` variables) that the desktop app, CLI and
 installer share: engine root, Python, model, engine URL, policy, backend and
 `ctx`. No fields are duplicated into the plugin.
 
@@ -70,5 +70,6 @@ The bridge lives in [`air/`](air/README.md) and can also be wired into
 
 ## Credits
 
-Engine: [JustVugg/colibri](https://github.com/JustVugg/colibri). Fine-tuning:
+Engine base idea: [JustVugg/colibri](https://github.com/JustVugg/colibri) —
+device-tiered MoE inference. Fine-tuning:
 [AirLLM](https://github.com/lyogavin/airllm).

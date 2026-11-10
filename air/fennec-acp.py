@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Colibri ACP bridge for JetBrains Air: a lazy, self-stopping engine proxy.
+"""Fennec ACP bridge for JetBrains Air: a lazy, self-stopping engine proxy.
 
 Air speaks ACP over stdio. The bridge **serves the configured engine URL**
 (http://127.0.0.1:8184 by default) and starts the ACP agent (Qwen Code by
@@ -13,7 +13,7 @@ the configured URL (the desktop app, another bridge), the bridge attaches and
 never stops it. A lease file lets the next bridge adopt an engine left behind
 when a bridge was killed hard, so it too stops when idle.
 
-The JetBrains plugin registers this bridge as the Colibri Code agent card;
+The JetBrains plugin registers this bridge as the Fennec Desktop agent card;
 ~/.jetbrains/acp.json is no longer involved.
 
 Everything after -- is the ACP agent command. Stdlib only; all paths are local.
@@ -37,8 +37,8 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
-START_TIMEOUT_S = int(os.environ.get("COLIBRI_ACP_TIMEOUT", "900"))
-REQUEST_TIMEOUT_S = int(os.environ.get("COLIBRI_ACP_REQUEST_TIMEOUT", "900"))
+START_TIMEOUT_S = int(os.environ.get("FENNEC_ACP_TIMEOUT", "900"))
+REQUEST_TIMEOUT_S = int(os.environ.get("FENNEC_ACP_REQUEST_TIMEOUT", "900"))
 POLL_S = 1.0
 DEFAULT_IDLE_S = 300
 HOP_BY_HOP = frozenset({
@@ -48,7 +48,7 @@ HOP_BY_HOP = frozenset({
 
 
 def log(message):
-    print(f"[colibri-acp] {message}", file=sys.stderr, flush=True)
+    print(f"[fennec-acp] {message}", file=sys.stderr, flush=True)
 
 
 class BridgeError(Exception):
@@ -67,7 +67,7 @@ def is_loopback(host):
 
 
 def shared_config():
-    path = Path(os.environ.get("COLIBRI_CONFIG") or Path.home() / ".colibri" / "config.json")
+    path = Path(os.environ.get("FENNEC_CONFIG") or Path.home() / ".fennec" / "config.json")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
@@ -78,7 +78,7 @@ def shared_config():
 
 
 def engine_settings(args, cfg):
-    raw_url = (args.engine_url or os.environ.get("COLIBRI_ENGINE_URL")
+    raw_url = (args.engine_url or os.environ.get("FENNEC_ENGINE_URL")
                or cfg.get("engine_url") or "http://127.0.0.1:8184")
     url = urlsplit(raw_url)
     if url.scheme != "http" or not url.hostname or url.port == 0:
@@ -89,22 +89,22 @@ def engine_settings(args, cfg):
     if not is_loopback(host):
         raise SystemExit("the ACP bridge only starts a local engine; set OPENAI_BASE_URL yourself for remote servers")
     port = url.port or 80
-    engine_root = Path(os.environ.get("COLIBRI_HOME") or cfg.get("engine_root") or Path.home() / "Colibri")
+    engine_root = Path(os.environ.get("FENNEC_HOME") or cfg.get("engine_root") or Path.home() / "Colibri")
     windows = os.name == "nt"
-    python = (args.python or os.environ.get("COLIBRI_PYTHON") or cfg.get("python")
+    python = (args.python or os.environ.get("FENNEC_PYTHON") or cfg.get("python")
               or engine_root / ".venv" / ("Scripts/python.exe" if windows else "bin/python"))
     settings = {
         "origin": f"http://{host}:{port}",
         "host": host,
         "port": port,
         "engine_root": str(engine_root),
-        "model": args.model or os.environ.get("COLIBRI_MODEL") or cfg.get("model") or "",
+        "model": args.model or os.environ.get("FENNEC_MODEL") or cfg.get("model") or "",
         "python": str(python),
         "launcher": str(args.launcher or engine_root / "c" / "coli"),
         "policy": args.policy or cfg.get("policy") or "balanced",
-        "backend": str(args.backend or os.environ.get("COLIBRI_BACKEND") or cfg.get("backend") or "auto").strip().lower(),
+        "backend": str(args.backend or os.environ.get("FENNEC_BACKEND") or cfg.get("backend") or "auto").strip().lower(),
         "ctx": args.ctx if args.ctx is not None else int(cfg.get("ctx") or 0),
-        "api_key": os.environ.get("COLIBRI_API_KEY") or os.environ.get("COLI_API_KEY") or "local",
+        "api_key": os.environ.get("FENNEC_API_KEY") or os.environ.get("COLI_API_KEY") or "local",
     }
     if settings["backend"] not in ("auto", "vulkan", "cuda", "metal", "cpu"):
         raise SystemExit("backend must be auto, vulkan, cuda, metal or cpu")
@@ -115,11 +115,11 @@ def engine_settings(args, cfg):
 def idle_seconds(args, cfg):
     if args.idle_timeout is not None:
         value = args.idle_timeout
-    elif os.environ.get("COLIBRI_ACP_IDLE_TIMEOUT"):
+    elif os.environ.get("FENNEC_ACP_IDLE_TIMEOUT"):
         try:
-            value = int(os.environ["COLIBRI_ACP_IDLE_TIMEOUT"])
+            value = int(os.environ["FENNEC_ACP_IDLE_TIMEOUT"])
         except ValueError:
-            raise SystemExit("COLIBRI_ACP_IDLE_TIMEOUT must be a number of seconds")
+            raise SystemExit("FENNEC_ACP_IDLE_TIMEOUT must be a number of seconds")
     else:
         try:
             value = int(cfg.get("idle_timeout") or DEFAULT_IDLE_S)
@@ -137,7 +137,7 @@ def free_port(host):
 
 
 def lease_path_for(settings):
-    return (Path(os.environ.get("COLIBRI_ACP_STATE") or Path.home() / ".colibri" / "air")
+    return (Path(os.environ.get("FENNEC_ACP_STATE") or Path.home() / ".fennec" / "air")
             / f"engine-{settings['port']}.json")
 
 
@@ -169,11 +169,11 @@ def engine_models(origin, api_key):
 
 def validate_start(settings):
     if not settings["model"] or not Path(settings["model"]).is_dir():
-        raise SystemExit("no local model configured; pass --model /path/to/model or set model in ~/.colibri/config.json")
+        raise SystemExit("no local model configured; pass --model /path/to/model or set model in ~/.fennec/config.json")
     if not Path(settings["python"]).is_file():
         raise SystemExit(f"Python runtime not found: {settings['python']}")
     if not Path(settings["launcher"]).is_file():
-        raise SystemExit(f"Colibri launcher not found: {settings['launcher']}")
+        raise SystemExit(f"Fennec launcher not found: {settings['launcher']}")
 
 
 def compute_model_id(settings):
@@ -215,18 +215,18 @@ def resolve_model_id(settings, running_models):
 
 def start_engine(settings, engine_origin):
     if not settings["model"] or not Path(settings["model"]).is_dir():
-        raise BridgeError("no local model configured; pass --model /path/to/model or set model in ~/.colibri/config.json")
+        raise BridgeError("no local model configured; pass --model /path/to/model or set model in ~/.fennec/config.json")
     if not Path(settings["python"]).is_file():
         raise BridgeError(f"Python runtime not found: {settings['python']}")
     if not Path(settings["launcher"]).is_file():
-        raise BridgeError(f"Colibri launcher not found: {settings['launcher']}")
+        raise BridgeError(f"Fennec launcher not found: {settings['launcher']}")
     target = urlsplit(engine_origin)
     cmd = [settings["python"], settings["launcher"], "serve",
            "--model", settings["model"], "--auto-tier",
            "--policy", settings["policy"], "--ctx", str(settings["ctx"]),
            "--host", target.hostname, "--port", str(target.port),
            "--api-key", settings["api_key"]]
-    log_file = Path(os.environ.get("TEMP") or os.environ.get("TMPDIR") or "/tmp") / "colibri-acp-engine.log"
+    log_file = Path(os.environ.get("TEMP") or os.environ.get("TMPDIR") or "/tmp") / "fennec-acp-engine.log"
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
     backend = settings.get("backend") or "auto"
     if backend != "auto":
@@ -247,7 +247,7 @@ def wait_until_ready(engine_origin, api_key, engine):
         if models is not None:
             return models
         if engine.poll() is not None:
-            raise BridgeError(f"the engine exited during startup; see {Path(os.environ.get('TEMP') or '/tmp') / 'colibri-acp-engine.log'}")
+            raise BridgeError(f"the engine exited during startup; see {Path(os.environ.get('TEMP') or '/tmp') / 'fennec-acp-engine.log'}")
         tick += 1
         if tick % 5 == 0:
             log(f"loading model... ({int(tick * POLL_S)}s)")
@@ -404,7 +404,7 @@ class EngineSupervisor:
             return
         if pid and pid_alive(pid):
             self.owned = False
-            log("attached to an engine owned by another Colibri bridge; leaving it to that bridge")
+            log("attached to an engine owned by another Fennec bridge; leaving it to that bridge")
         elif pid and engine_pid:
             self.owned = True
             self.engine_pid = engine_pid
@@ -477,7 +477,7 @@ class EngineSupervisor:
     def models_payload(self):
         model = self.actual_model or self.declared_model
         return json.dumps({"object": "list", "data": [
-            {"id": model, "object": "model", "created": int(time.time()), "owned_by": "colibri"}
+            {"id": model, "object": "model", "created": int(time.time()), "owned_by": "fennec"}
         ]}).encode()
 
     def rewrite_body(self, headers, body):
@@ -646,8 +646,8 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(b"%x\r\n" % len(payload) + payload + b"\r\n")
                 self.wfile.flush()
 
-        heartbeat = (b'data: {"id":"chatcmpl-colibri","object":"chat.completion.chunk",'
-                     b'"created":0,"model":"colibri","choices":[{"index":0,"delta":{},'
+        heartbeat = (b'data: {"id":"chatcmpl-fennec","object":"chat.completion.chunk",'
+                     b'"created":0,"model":"fennec","choices":[{"index":0,"delta":{},'
                      b'"finish_reason":null}]}\n\n')
 
         def beat():
@@ -677,7 +677,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                     self.command, self.path, self.headers, body)
             except BridgeError as exc:
                 stop_beat()
-                error = {"error": {"message": str(exc), "type": "colibri_bridge"}}
+                error = {"error": {"message": str(exc), "type": "fennec_bridge"}}
                 frame(b"data: " + json.dumps(error).encode() + b"\n\n")
                 frame(b"data: [DONE]\n\n")
                 return
@@ -689,7 +689,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                     except (OSError, http.client.HTTPException):
                         payload = ""
                     error = {"error": {"message": f"engine returned {status}: {payload[:2000]}",
-                                       "type": "colibri_engine"}}
+                                       "type": "fennec_engine"}}
                     frame(b"data: " + json.dumps(error).encode() + b"\n\n")
                     frame(b"data: [DONE]\n\n")
                     return
@@ -765,7 +765,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def _json(self, status, message):
-        payload = json.dumps({"error": {"message": message, "type": "colibri_bridge"}}).encode()
+        payload = json.dumps({"error": {"message": message, "type": "fennec_bridge"}}).encode()
         self._raw(status, [("Content-Type", "application/json")], payload)
 
     def _raw(self, status, headers, body):
@@ -861,7 +861,7 @@ def main(argv=None):
             supervisor = EngineSupervisor(settings, declared, idle_timeout, engine_origin)
             log(f"an engine already answers on {settings['origin']}; attaching and leaving it warm")
         else:
-            threading.Thread(target=server.serve_forever, name="colibri-proxy", daemon=True).start()
+            threading.Thread(target=server.serve_forever, name="fennec-proxy", daemon=True).start()
             idle_note = f"stops after {idle_timeout}s idle" if idle_timeout else "idle stop disabled"
             log(f"bridge serving {settings['origin']}/v1; the engine will run on {engine_origin} "
                 f"and {idle_note}; it starts with the first request")
@@ -876,7 +876,7 @@ def main(argv=None):
             except Exception as exc:  # the watchdog must never take the bridge down
                 log(f"idle watchdog: {exc}")
 
-    threading.Thread(target=watch, name="colibri-idle", daemon=True).start()
+    threading.Thread(target=watch, name="fennec-idle", daemon=True).start()
     env = dict(os.environ,
                OPENAI_BASE_URL=settings["origin"] + "/v1",
                OPENAI_API_KEY=settings["api_key"],

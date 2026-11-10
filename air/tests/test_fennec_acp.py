@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 AIR = Path(__file__).resolve().parent.parent
-BRIDGE = AIR / "colibri-acp.py"
+BRIDGE = AIR / "fennec-acp.py"
 
 FAKE_ENGINE = r'''
 import argparse, json, os, time
@@ -31,7 +31,7 @@ ap.add_argument("--api-key")
 ap.add_argument("--auto-tier", action="store_true")
 args = ap.parse_args()
 
-MODEL = "fake-colibri"
+MODEL = "fake-fennec"
 
 def record(model):
     path = os.environ.get("FAKE_ENGINE_REQS")
@@ -231,16 +231,16 @@ def port_open(port):
 
 def bridge_env(tmp, **overrides):
     env = dict(os.environ)
-    for key in ("COLIBRI_ENGINE_URL", "COLIBRI_CONFIG", "COLIBRI_API_KEY", "COLI_API_KEY",
-                "COLIBRI_MODEL", "COLIBRI_PYTHON", "COLIBRI_HOME", "OPENAI_MODEL",
-                "COLIBRI_BACKEND", "COLI_VULKAN", "COLI_CUDA", "COLI_METAL",
-                "COLIBRI_ACP_IDLE_TIMEOUT", "COLIBRI_ACP_TIMEOUT", "COLIBRI_ACP_STATE",
+    for key in ("FENNEC_ENGINE_URL", "FENNEC_CONFIG", "FENNEC_API_KEY", "COLI_API_KEY",
+                "FENNEC_MODEL", "FENNEC_PYTHON", "FENNEC_HOME", "OPENAI_MODEL",
+                "FENNEC_BACKEND", "COLI_VULKAN", "COLI_CUDA", "COLI_METAL",
+                "FENNEC_ACP_IDLE_TIMEOUT", "FENNEC_ACP_TIMEOUT", "FENNEC_ACP_STATE",
                 "FAKE_ENGINE_ENV", "FAKE_ENGINE_REQS", "FAKE_ENGINE_PORT_FILE",
                 "FAKE_ENGINE_DELAY", "ENGINE_PORT", "ENGINE_PORT_FILE"):
         env.pop(key, None)
-    env.update(COLIBRI_CONFIG=str(Path(tmp) / "missing.json"), TEMP=str(tmp), TMP=str(tmp),
-               ACP_PROBE=str(Path(tmp) / "probe.json"), COLIBRI_ACP_TIMEOUT="30",
-               COLIBRI_ACP_STATE=str(Path(tmp) / "state"))
+    env.update(FENNEC_CONFIG=str(Path(tmp) / "missing.json"), TEMP=str(tmp), TMP=str(tmp),
+               ACP_PROBE=str(Path(tmp) / "probe.json"), FENNEC_ACP_TIMEOUT="30",
+               FENNEC_ACP_STATE=str(Path(tmp) / "state"))
     env.update(overrides)
     return env
 
@@ -305,7 +305,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(data["status"], 200)
         self.assertEqual(data["reply"], "hello")
         reqs = [json.loads(line) for line in (self.dir / "reqs.log").read_text().splitlines()]
-        self.assertEqual(reqs, [{"model": "fake-colibri"}], "the bridge rewrites the declared id")
+        self.assertEqual(reqs, [{"model": "fake-fennec"}], "the bridge rewrites the declared id")
         engine_port = int(port_file.read_text().strip())
         self.assertNotEqual(engine_port, port, "the engine runs beside the proxy, not on it")
         deadline = time.monotonic() + 5
@@ -395,7 +395,7 @@ class BridgeTests(unittest.TestCase):
     def test_backend_comes_from_shared_config(self):
         cfg = self.dir / "config.json"
         cfg.write_text(json.dumps({"backend": "metal"}), encoding="utf-8")
-        data = self.spawn_env("--", sys.executable, "-c", CHAT_ENV, env={"COLIBRI_CONFIG": str(cfg)})
+        data = self.spawn_env("--", sys.executable, "-c", CHAT_ENV, env={"FENNEC_CONFIG": str(cfg)})
         self.assertEqual(data, {"COLI_VULKAN": "0", "COLI_CUDA": "0", "COLI_METAL": "1"})
 
     def test_auto_backend_leaves_engine_default_untouched(self):
