@@ -42,6 +42,10 @@ cd "$HERE"
 
 cp -r "$HERE/src/main/resources/." "$CLASSES/"
 
+# The Air bridge is a resource the plugin installs into ~/.colibri/air.
+mkdir -p "$CLASSES/colibri/air"
+cp "$HERE/air/colibri-acp.py" "$CLASSES/colibri/air/colibri-acp.py"
+
 "$JAR" --create --file "$DIST/lib/colibri-code.jar" -C "$CLASSES" .
 
 mkdir -p "$DIST/META-INF"

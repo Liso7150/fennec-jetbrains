@@ -1,58 +1,63 @@
 # Colibri for JetBrains
 
 A dependency-free [Colibri](https://github.com/JustVugg/colibri) plugin for
-JetBrains IDEs: a right-side SSE chat tool window plus editor actions
-**Explain / Fix / Write Tests** (Ctrl+Alt+E / F). Talks to the engine's
-OpenAI-compatible server and starts it locally on demand.
+JetBrains Air. It has no tool window of its own: it registers **Colibri** as
+an Air agent and manages the ACP bridge behind it. Everything runs on this
+machine.
 
-## Features
+## What it does
 
-- SSE chat tool window, one per project; Stop cancels only that project's stream.
-- Streams engine `reasoning_content` into a visible "thinking" section before the answer.
-- Explain / Fix / Write Tests editor actions.
-- Engine starts on the first message, attaches to a running engine, and stops the engine it owns when the IDE closes.
-- Shared suite config with per-project overrides; local bearer key by default.
-- ACP bridge for JetBrains Air (`air/colibri-acp.py`) with its own test suite.
+- Installs the managed bridge at `~/.colibri/air/colibri-acp.py`.
+- Merges a `Colibri` entry into `~/.jetbrains/acp.json`. The first edit backs
+  the file up to `acp.json.bak-colibri`; every other server, and the ACP agent
+  command after `--`, is preserved.
+- The engine starts on the first prompt, not when Air opens. An engine the
+  bridge owns stops after five minutes without requests (or when the session
+  ends), so an open IDE costs no model memory. An engine that was already
+  running — started by the desktop app or a terminal — is attached to and
+  never stopped.
+
+**Where the agent appears:** Air's Agents page shows cards from JetBrains'
+remote registry. Custom ACP servers like this one appear in Air's agent
+selector menu, not as cards; that is an Air limitation, not a plugin setting.
+The plugin deliberately provides no tab, settings page or editor actions.
 
 ## Build
 
 ```bash
-./build-plugin.sh    # compiles against the IDE JBR, outputs build/ColibriCode-plugin-1.2.0.zip
+./build-plugin.sh    # compiles against the IDE JBR, outputs build/ColibriCode-plugin-1.3.0.zip
 ```
 
-Install the zip via *Settings → Plugins → ⚙ → Install Plugin from Disk*.
+Install the zip via *Settings → Plugins → ⚙ → Install Plugin from Disk*, then
+restart Air and pick **Colibri** in the agent selector.
 
 ## Configure
 
-*Settings → Tools → Colibri Code*. Every field is optional: blank fields are
-inherited from the suite configuration (`~/.colibri/config.json` or
+The bridge reads the suite configuration (`~/.colibri/config.json` or
 `$COLIBRI_CONFIG`, plus `COLIBRI_*` variables) that the desktop app, CLI and
-installer share. Fresh installs therefore need no setup when the suite is
-installed. Engine URL defaults to `http://127.0.0.1:8184`; the API key comes
-from `COLIBRI_API_KEY` (local bearer by default).
+installer share: engine root, Python, model, engine URL, policy, backend and
+`ctx`. No fields are duplicated into the plugin.
 
-Each project gets its own tool window; Stop cancels the in-flight stream in
-that project only.
+Optional: add `"idle_timeout": 600` to the shared config, or put
+`--idle-timeout 600` before the `--` in the `Colibri` entry of
+`acp.json`, to change how long an idle engine stays loaded. `0` disables the
+idle stop.
 
 ## Engine lifecycle
 
-The engine is local and on demand. The first message in a tool window starts
-`coli serve` on the configured loopback URL when nothing is listening; the
-status line follows model loading, and the Start engine button does the same
-by hand. If the plugin spawned that process, it is stopped (with children)
-when the IDE closes. An engine that was already running — started by the
-desktop app or your own shell — is attached to and left running. Every
-model, cache and log file stays on this machine; the plugin never contacts a
-remote service.
+The engine is local and lazy. While no prompt has arrived, no engine process
+exists at all. The first prompt starts `coli serve` on the configured loopback
+URL; the bridge proxies OpenAI-compatible traffic (including SSE streaming) to
+it. After the idle timeout the bridge stops the engine it started; the next
+prompt starts a fresh one. If Air or the bridge is killed hard, the next
+bridge adopts the engine left behind and stops it when idle. Every model,
+cache and log file stays on this machine; the plugin never contacts a remote
+service.
 
 ## ACP bridge (JetBrains Air)
 
-Colibri runs inside JetBrains Air as an ACP agent through the on-demand bridge
-in [`air/`](air/README.md). The bridge starts the local engine when the first
-prompt arrives, launches Qwen Code (or any ACP agent) with `OPENAI_*` pointed at
-it, and stops the engine it started when the session ends. Configure
-`~/.jetbrains/acp.json` once with your absolute paths; the bridge reads the
-shared `~/.colibri/config.json` for the engine URL and model.
+The bridge lives in [`air/`](air/README.md) and can also be wired into
+`acp.json` by hand. Its tests use a fake engine and a fake ACP agent.
 
 ## Credits
 

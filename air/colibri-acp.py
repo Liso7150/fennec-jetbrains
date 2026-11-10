@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""On-demand Colibri ACP bridge for JetBrains Air.
+"""Colibri ACP bridge for JetBrains Air: a lazy, self-stopping engine proxy.
 
-Air speaks the Agent Client Protocol over stdio. This shim starts the local
-Colibri engine only when the configured loopback endpoint is not already
-serving, runs the ACP agent (Qwen Code by default) with OPENAI_* pointed at it,
-and stops the engine it spawned when the agent exits. An engine that was
-already running on the machine is attached to and left untouched.
+Air speaks ACP over stdio. The bridge starts the ACP agent (Qwen Code by
+default) with OPENAI_* pointing at a loopback proxy it owns. The engine is
+started on the first proxied request, not when Air launches the agent, and an
+engine the bridge owns is stopped after --idle-timeout seconds without
+requests or when the agent exits, so an idle Air window costs no model
+memory. An engine that was already running (the desktop app, another bridge)
+is attached to and never stopped. A lease file lets the next bridge adopt an
+engine left behind when a bridge was killed hard, so it too stops when idle.
 
-Usage in ~/.jetbrains/acp.json (paths adjusted for your install):
+Usage in ~/.jetbrains/acp.json (the plugin writes this for you):
 
   "Colibri": {
-    "command": "C:/Users/you/Colibri/engine/.venv/Scripts/python.exe",
+    "command": "C:/Users/you/Colibri/.venv/Scripts/python.exe",
     "args": [
-      "C:/Users/you/Colibri-Suite/colibri-jetbrains/air/colibri-acp.py",
+      "C:/Users/you/.colibri/air/colibri-acp.py",
       "--",
       "C:/Users/you/AppData/Local/qwen-code/qwen-code/node/node.exe",
       "C:/Users/you/AppData/Local/qwen-code/qwen-code/lib/cli-entry.js",
@@ -26,12 +29,14 @@ from __future__ import annotations
 
 import argparse
 import http.client
+import http.server
 import ipaddress
 import json
 import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -39,11 +44,23 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 START_TIMEOUT_S = int(os.environ.get("COLIBRI_ACP_TIMEOUT", "900"))
-POLL_S = 2.0
+REQUEST_TIMEOUT_S = int(os.environ.get("COLIBRI_ACP_REQUEST_TIMEOUT", "900"))
+POLL_S = 1.0
+DEFAULT_IDLE_S = 300
+HOP_BY_HOP = frozenset({
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+    "te", "trailers", "transfer-encoding", "upgrade",
+})
 
 
 def log(message):
     print(f"[colibri-acp] {message}", file=sys.stderr, flush=True)
+
+
+class BridgeError(Exception):
+    def __init__(self, message, status=503):
+        super().__init__(message)
+        self.status = status
 
 
 def is_loopback(host):
@@ -86,6 +103,7 @@ def engine_settings(args, cfg):
         "origin": f"http://{host}:{port}",
         "host": host,
         "port": port,
+        "engine_root": str(engine_root),
         "model": args.model or os.environ.get("COLIBRI_MODEL") or cfg.get("model") or "",
         "python": str(python),
         "launcher": str(args.launcher or engine_root / "c" / "coli"),
@@ -96,8 +114,26 @@ def engine_settings(args, cfg):
     }
     if settings["backend"] not in ("auto", "vulkan", "cuda", "metal", "cpu"):
         raise SystemExit("backend must be auto, vulkan, cuda, metal or cpu")
-    settings["model_id"] = args.model_id or os.environ.get("OPENAI_MODEL") or ""
+    settings["model_id"] = args.model_id or os.environ.get("OPENAI_MODEL") or str(cfg.get("model_id") or "")
     return settings
+
+
+def idle_seconds(args, cfg):
+    if args.idle_timeout is not None:
+        value = args.idle_timeout
+    elif os.environ.get("COLIBRI_ACP_IDLE_TIMEOUT"):
+        try:
+            value = int(os.environ["COLIBRI_ACP_IDLE_TIMEOUT"])
+        except ValueError:
+            raise SystemExit("COLIBRI_ACP_IDLE_TIMEOUT must be a number of seconds")
+    else:
+        try:
+            value = int(cfg.get("idle_timeout") or DEFAULT_IDLE_S)
+        except (TypeError, ValueError):
+            raise SystemExit("idle_timeout in the shared configuration must be a number of seconds")
+    if value < 0:
+        raise SystemExit("idle timeout must be zero (never stop) or a number of seconds")
+    return value
 
 
 def engine_models(settings):
@@ -118,13 +154,59 @@ def engine_models(settings):
     return [str(item.get("id")) for item in data if isinstance(item, dict) and item.get("id")]
 
 
-def start_engine(settings):
+def validate_start(settings):
     if not settings["model"] or not Path(settings["model"]).is_dir():
         raise SystemExit("no local model configured; pass --model /path/to/model or set model in ~/.colibri/config.json")
     if not Path(settings["python"]).is_file():
         raise SystemExit(f"Python runtime not found: {settings['python']}")
     if not Path(settings["launcher"]).is_file():
         raise SystemExit(f"Colibri launcher not found: {settings['launcher']}")
+
+
+def compute_model_id(settings):
+    """Ask the engine's own family registry for the id coli serve will announce."""
+    model = settings["model"]
+    family_dir = Path(settings["engine_root"]) / "c"
+    if not model or not Path(model).is_dir() or not (family_dir / "family_registry.py").is_file():
+        return None
+    script = (
+        "import sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import family_registry as fr\n"
+        "print(fr.default_model_id(fr.resolve_model(sys.argv[2])))\n"
+    )
+    try:
+        done = subprocess.run([settings["python"], "-c", script, str(family_dir), str(Path(model))],
+                              capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if done.returncode != 0:
+        return None
+    lines = done.stdout.strip().splitlines()
+    return lines[-1].strip() if lines else None
+
+
+def resolve_model_id(settings, running_models):
+    if settings["model_id"]:
+        return settings["model_id"]
+    if running_models:
+        return running_models[0]
+    computed = compute_model_id(settings)
+    if computed:
+        log(f"model id from the engine's family registry: {computed}")
+        return computed
+    if settings["model"]:
+        return Path(settings["model"]).name
+    return ""
+
+
+def start_engine(settings):
+    if not settings["model"] or not Path(settings["model"]).is_dir():
+        raise BridgeError("no local model configured; pass --model /path/to/model or set model in ~/.colibri/config.json")
+    if not Path(settings["python"]).is_file():
+        raise BridgeError(f"Python runtime not found: {settings['python']}")
+    if not Path(settings["launcher"]).is_file():
+        raise BridgeError(f"Colibri launcher not found: {settings['launcher']}")
     cmd = [settings["python"], settings["launcher"], "serve",
            "--model", settings["model"], "--auto-tier",
            "--policy", settings["policy"], "--ctx", str(settings["ctx"]),
@@ -149,15 +231,14 @@ def wait_until_ready(settings, engine):
     while time.monotonic() < deadline:
         models = engine_models(settings)
         if models is not None:
-            log("engine ready")
             return models
         if engine.poll() is not None:
-            raise SystemExit(f"the engine exited during startup; see {Path(os.environ.get('TEMP') or '/tmp') / 'colibri-acp-engine.log'}")
+            raise BridgeError(f"the engine exited during startup; see {Path(os.environ.get('TEMP') or '/tmp') / 'colibri-acp-engine.log'}")
         tick += 1
         if tick % 5 == 0:
-            log(f"loading model... ({tick * int(POLL_S)}s)")
+            log(f"loading model... ({int(tick * POLL_S)}s)")
         time.sleep(POLL_S)
-    raise SystemExit("engine did not become ready in time")
+    raise BridgeError("engine did not become ready in time")
 
 
 def stop_owned(engine):
@@ -181,16 +262,415 @@ def stop_owned(engine):
             engine.kill()
 
 
+def stop_pid(pid):
+    if pid <= 0:
+        return
+    log("stopping the adopted engine")
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                       capture_output=True, check=False)
+        return
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except OSError:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+
+def pid_alive(pid):
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        try:
+            code = wintypes.DWORD()
+            if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return code.value == 259  # STILL_ACTIVE
+            return False
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+class EngineSupervisor:
+    """Owns the engine behind the proxy: lazy start, idle stop, safe attach."""
+
+    def __init__(self, settings, declared_model, idle_timeout):
+        self.settings = settings
+        self.declared_model = declared_model
+        self.actual_model = declared_model
+        self.idle_timeout = idle_timeout
+        self.lock = threading.RLock()
+        self.process = None
+        self.engine_pid = None
+        self.owned = False
+        self.classified = False
+        self.inflight = 0
+        self.last_activity = time.monotonic()
+        self.rewrote = False
+        self.lease_path = (Path(os.environ.get("COLIBRI_ACP_STATE") or Path.home() / ".colibri" / "air")
+                           / f"engine-{settings['port']}.json")
+
+    # --- engine lifecycle -------------------------------------------------
+    def running(self):
+        if self.process is not None and self.process.poll() is None:
+            return True
+        return engine_models(self.settings) is not None
+
+    def ensure_engine(self):
+        with self.lock:
+            if self.process is not None and self.process.poll() is not None:
+                log("the engine exited; it will start again on the next request")
+                self.process = None
+                self.engine_pid = None
+                self.owned = False
+                self.classified = False
+                self._drop_lease()
+            if self.process is not None:
+                try:
+                    models = wait_until_ready(self.settings, self.process)
+                except BridgeError:
+                    self._stop("the running engine stopped answering; stopping it")
+                    raise
+                self._remember(models)
+                return
+            models = engine_models(self.settings)
+            if models is not None:
+                self._remember(models)
+                if not self.classified:
+                    self._classify_attached()
+                return
+            self._start()
+
+    def _start(self):
+        self.process = start_engine(self.settings)
+        self.engine_pid = self.process.pid
+        self.owned = True
+        self.classified = True
+        self._write_lease()
+        try:
+            models = wait_until_ready(self.settings, self.process)
+        except BridgeError:
+            self._stop("the engine did not become ready; stopping it")
+            raise
+        self._remember(models)
+        if self.idle_timeout:
+            log(f"engine ready; it stops after {self.idle_timeout}s without requests")
+        else:
+            log("engine ready; idle stop is disabled")
+
+    def _remember(self, models):
+        if models:
+            if models[0] != self.actual_model:
+                log(f"the engine reports model id {models[0]}")
+            self.actual_model = models[0]
+
+    def _classify_attached(self):
+        self.classified = True
+        lease = self._read_lease()
+        pid = int(lease.get("pid") or 0) if isinstance(lease, dict) else 0
+        engine_pid = int(lease.get("engine") or 0) if isinstance(lease, dict) else 0
+        if pid == os.getpid():
+            self.owned = True
+            self.engine_pid = engine_pid or self.engine_pid
+            return
+        if pid and pid_alive(pid):
+            self.owned = False
+            log("attached to an engine owned by another Colibri bridge; leaving it to that bridge")
+        elif pid and engine_pid:
+            self.owned = True
+            self.engine_pid = engine_pid
+            self._write_lease()
+            log("adopted an engine left behind by an earlier bridge; it stops when idle")
+        else:
+            self.owned = False
+            log("attached to an already running engine; it stays warm after this session")
+
+    def maybe_stop_idle(self):
+        with self.lock:
+            if not self.owned or self.inflight or self.idle_timeout <= 0:
+                return
+            if self.process is None and self.engine_pid is None:
+                return
+            idle = time.monotonic() - self.last_activity
+            if idle < self.idle_timeout:
+                return
+            log(f"engine idle for {int(idle)}s; stopping it to free memory (the next request starts it again)")
+            self._stop(None)
+
+    def _stop(self, reason):
+        if reason:
+            log(reason)
+        if self.process is not None:
+            stop_owned(self.process)
+        elif self.engine_pid:
+            stop_pid(self.engine_pid)
+        self.process = None
+        self.engine_pid = None
+        self.owned = False
+        self.classified = False
+        self._drop_lease()
+
+    def shutdown(self):
+        with self.lock:
+            if self.owned:
+                self._stop(None)
+
+    # --- lease: survives a bridge that was killed hard --------------------
+    def _read_lease(self):
+        try:
+            return json.loads(self.lease_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def _write_lease(self):
+        engine_pid = self.process.pid if self.process is not None else self.engine_pid
+        try:
+            self.lease_path.parent.mkdir(parents=True, exist_ok=True)
+            self.lease_path.write_text(json.dumps({"pid": os.getpid(),
+                                                   "engine": engine_pid,
+                                                   "origin": self.settings["origin"],
+                                                   "started": int(time.time())}), encoding="utf-8")
+        except OSError as exc:
+            log(f"cannot write the engine lease {self.lease_path}: {exc}")
+
+    def _drop_lease(self):
+        try:
+            self.lease_path.unlink()
+        except OSError:
+            pass
+
+    # --- request plumbing --------------------------------------------------
+    def begin(self):
+        with self.lock:
+            self.inflight += 1
+            self.last_activity = time.monotonic()
+
+    def end(self):
+        with self.lock:
+            self.inflight = max(0, self.inflight - 1)
+            self.last_activity = time.monotonic()
+
+    def models_payload(self):
+        model = self.actual_model or self.declared_model
+        return json.dumps({"object": "list", "data": [
+            {"id": model, "object": "model", "created": int(time.time()), "owned_by": "colibri"}
+        ]}).encode()
+
+    def rewrite_body(self, headers, body):
+        if not body:
+            return body
+        content_type = ""
+        for name, value in headers.items():
+            if name.lower() == "content-type":
+                content_type = value.lower()
+                break
+        if "json" not in content_type or not self.actual_model:
+            return body
+        try:
+            data = json.loads(body)
+        except (ValueError, UnicodeDecodeError):
+            return body
+        if not isinstance(data, dict) or data.get("model") == self.actual_model or "model" not in data:
+            return body
+        data["model"] = self.actual_model
+        if not self.rewrote:
+            log(f"engine serves {self.actual_model}; request model names are rewritten to match")
+            self.rewrote = True
+        return json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+    def open(self, method, path, headers, body):
+        self.ensure_engine()
+        body = self.rewrite_body(headers, body)
+        connection = http.client.HTTPConnection(self.settings["host"], self.settings["port"],
+                                                timeout=REQUEST_TIMEOUT_S)
+        forward = {name: value for name, value in headers.items()
+                   if name.lower() not in HOP_BY_HOP and name.lower() not in ("host", "content-length")}
+        forward["Host"] = f"{self.settings['host']}:{self.settings['port']}"
+        forward["Connection"] = "close"
+        if body or method in ("POST", "PUT", "PATCH"):
+            forward["Content-Length"] = str(len(body))
+        try:
+            connection.request(method, path, body=body or None, headers=forward)
+            response = connection.getresponse()
+        except (OSError, http.client.HTTPException) as exc:
+            connection.close()
+            with self.lock:
+                if self.process is not None and self.process.poll() is not None:
+                    self.process = None
+                    self.owned = False
+                    self._drop_lease()
+            raise BridgeError(f"cannot reach the Colibri engine at {self.settings['origin']}: {exc}")
+        return response.status, list(response.headers.items()), response, connection
+
+
+class ProxyHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, fmt, *args):
+        pass
+
+    def do_GET(self):
+        self._forward()
+
+    def do_POST(self):
+        self._forward()
+
+    def do_PUT(self):
+        self._forward()
+
+    def do_PATCH(self):
+        self._forward()
+
+    def do_DELETE(self):
+        self._forward()
+
+    def _read_body(self):
+        encoding = self.headers.get("Transfer-Encoding", "").lower()
+        if "chunked" in encoding:
+            return self._read_chunked()
+        length = self.headers.get("Content-Length")
+        if not length:
+            return b""
+        try:
+            count = int(length)
+        except ValueError:
+            raise BridgeError("invalid Content-Length", 400)
+        return self.rfile.read(count) if count > 0 else b""
+
+    def _read_chunked(self):
+        data = bytearray()
+        while True:
+            line = self.rfile.readline(65536)
+            if not line:
+                break
+            try:
+                size = int(line.split(b";")[0].strip(), 16)
+            except ValueError:
+                raise BridgeError("invalid chunked request body", 400)
+            if size == 0:
+                while True:
+                    trailer = self.rfile.readline(65536)
+                    if trailer in (b"\r\n", b"\n", b""):
+                        break
+                break
+            data += self.rfile.read(size)
+            self.rfile.read(2)
+        return bytes(data)
+
+    def _forward(self):
+        supervisor = self.server.supervisor
+        try:
+            body = self._read_body()
+        except BridgeError as exc:
+            self._json(exc.status, str(exc))
+            return
+        supervisor.begin()
+        try:
+            path = self.path.split("?")[0]
+            if self.command == "GET" and path == "/v1/models" and not supervisor.running():
+                self._raw(200, [("Content-Type", "application/json")], supervisor.models_payload())
+                return
+            try:
+                status, headers, response, connection = supervisor.open(self.command, self.path,
+                                                                        self.headers, body)
+            except BridgeError as exc:
+                self._json(exc.status, str(exc))
+                return
+            try:
+                self._stream(status, headers, response)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            finally:
+                connection.close()
+        finally:
+            supervisor.end()
+
+    def _stream(self, status, headers, response):
+        self.send_response_only(status)
+        for name, value in headers:
+            if name.lower() in HOP_BY_HOP or name.lower() in ("content-length", "transfer-encoding"):
+                continue
+            self.send_header(name, value)
+        length = response.length
+        if self.command == "HEAD" or status in (204, 304) or status < 200:
+            if length is not None:
+                self.send_header("Content-Length", str(length))
+            self.end_headers()
+            return
+        if length is not None:
+            self.send_header("Content-Length", str(length))
+            self.end_headers()
+            remaining = length
+            while remaining > 0:
+                chunk = response.read(min(65536, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+                remaining -= len(chunk)
+            return
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        while True:
+            try:
+                chunk = response.read1(65536)
+            except http.client.IncompleteRead:
+                break
+            if not chunk:
+                break
+            self.wfile.write(b"%x\r\n" % len(chunk) + chunk + b"\r\n")
+            self.wfile.flush()
+        self.wfile.write(b"0\r\n\r\n")
+        self.wfile.flush()
+
+    def _json(self, status, message):
+        payload = json.dumps({"error": {"message": message, "type": "colibri_bridge"}}).encode()
+        self._raw(status, [("Content-Type", "application/json")], payload)
+
+    def _raw(self, status, headers, body):
+        self.send_response_only(status)
+        for name, value in headers:
+            self.send_header(name, value)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+            self.wfile.flush()
+
+
+class ProxyServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, address, handler, supervisor):
+        self.supervisor = supervisor
+        super().__init__(address, handler)
+
+
 def parser():
-    ap = argparse.ArgumentParser(description="Run an ACP agent against an on-demand local Colibri engine")
+    ap = argparse.ArgumentParser(description="Run an ACP agent against a lazy, self-stopping Colibri engine")
     ap.add_argument("--engine-url")
     ap.add_argument("--model", help="model directory to serve when the endpoint is silent")
-    ap.add_argument("--model-id", help="OPENAI_MODEL override; defaults to the engine's first model")
+    ap.add_argument("--model-id", help="OPENAI_MODEL override; defaults to what the engine will announce")
     ap.add_argument("--python", help="Python runtime for the engine (defaults to <engine_root>/.venv)")
     ap.add_argument("--launcher", help="engine launcher path (defaults to <engine_root>/c/coli)")
     ap.add_argument("--policy")
     ap.add_argument("--backend", help="engine backend for on-demand starts: auto, vulkan, cuda, metal or cpu")
     ap.add_argument("--ctx", type=int)
+    ap.add_argument("--idle-timeout", type=int,
+                    help=f"seconds without requests before an owned engine is stopped (default {DEFAULT_IDLE_S}, 0 disables)")
     ap.add_argument("--check", action="store_true", help="report engine status without starting it or any agent")
     ap.add_argument("acp", nargs=argparse.REMAINDER, help="ACP agent command after --")
     return ap
@@ -202,35 +682,55 @@ def strip_separator(argv):
 
 def main(argv=None):
     args = parser().parse_args(argv)
-    settings = engine_settings(args, shared_config())
+    cfg = shared_config()
+    settings = engine_settings(args, cfg)
+    idle_timeout = idle_seconds(args, cfg)
     models = engine_models(settings)
-    engine = None
-    if models is None and not args.check:
-        engine = start_engine(settings)
-        models = wait_until_ready(settings, engine)
     if args.check:
         if models is None:
             log(f"no engine at {settings['origin']}")
             return 1
-        print(json.dumps({"origin": settings["origin"], "models": models}, indent=2))
+        print(json.dumps({"origin": settings["origin"], "models": models,
+                          "idle_timeout": idle_timeout}, indent=2))
         return 0
-    if not models:
-        stop_owned(engine)
-        raise SystemExit("the engine reports no models")
-    model_id = settings["model_id"] or models[0]
+    if models is None:
+        validate_start(settings)
+    declared = resolve_model_id(settings, models)
+    if not declared:
+        raise SystemExit("cannot determine the model id; pass --model-id")
     command = strip_separator(args.acp)
     if not command:
-        stop_owned(engine)
         raise SystemExit("no ACP command; put the agent command after -- (see air/README.md)")
+    supervisor = EngineSupervisor(settings, declared, idle_timeout)
+    server = ProxyServer(("127.0.0.1", 0), ProxyHandler, supervisor)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, name="colibri-proxy", daemon=True).start()
+    idle_note = f"stops after {idle_timeout}s idle" if idle_timeout else "idle stop disabled"
+    log(f"proxy on http://127.0.0.1:{port}/v1; the engine starts on the first request and {idle_note}")
+    log(f"agent model {declared}")
+
+    done = threading.Event()
+
+    def watch():
+        while not done.wait(1.0):
+            try:
+                supervisor.maybe_stop_idle()
+            except Exception as exc:  # the watchdog must never take the bridge down
+                log(f"idle watchdog: {exc}")
+
+    threading.Thread(target=watch, name="colibri-idle", daemon=True).start()
     env = dict(os.environ,
-               OPENAI_BASE_URL=settings["origin"] + "/v1",
+               OPENAI_BASE_URL=f"http://127.0.0.1:{port}/v1",
                OPENAI_API_KEY=settings["api_key"],
-               OPENAI_MODEL=model_id)
-    log(f"launching ACP agent with model {model_id}")
+               OPENAI_MODEL=declared)
+    log("launching the ACP agent")
     try:
         agent = subprocess.Popen(command, env=env)
     except OSError as exc:
-        stop_owned(engine)
+        done.set()
+        supervisor.shutdown()
+        server.shutdown()
+        server.server_close()
         raise SystemExit(f"cannot start the ACP agent: {exc}") from exc
 
     def forward(signum, _frame):
@@ -246,7 +746,10 @@ def main(argv=None):
     try:
         code = agent.wait()
     finally:
-        stop_owned(engine)
+        done.set()
+        supervisor.shutdown()
+        server.shutdown()
+        server.server_close()
     return code if code >= 0 else 1
 
 

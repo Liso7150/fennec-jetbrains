@@ -1,49 +1,55 @@
 # Colibri ACP bridge for JetBrains Air
 
-JetBrains Air talks to agents over the Agent Client Protocol (stdio). This small
-stdlib-only shim makes Colibri work there without a permanently running server:
+JetBrains Air talks to agents over the Agent Client Protocol (stdio). This
+stdlib-only bridge makes Colibri work there while keeping model memory off
+until it is actually needed:
 
-1. probes `http://127.0.0.1:8184/v1/models` (or `engine_url` from the shared config);
-2. if nothing answers, starts `coli serve` locally with your configured model;
-3. launches the real ACP agent (Qwen Code) with `OPENAI_BASE_URL`,
-   `OPENAI_API_KEY` and `OPENAI_MODEL` pointing at that local engine;
-4. when the agent exits, stops the engine **only if this bridge started it**.
-   An engine that was already running (desktop app, terminal) is attached to and
-   left alone.
+1. starts the real ACP agent (Qwen Code) with `OPENAI_BASE_URL`,
+   `OPENAI_API_KEY` and `OPENAI_MODEL` pointing at a loopback proxy it owns;
+2. starts `coli serve` behind that proxy **on the first proxied request**, not
+   when Air launches the agent;
+3. proxies OpenAI-compatible traffic in both directions, including chunked SSE
+   streaming, so answers stream while they are generated;
+4. stops an engine it owns after `--idle-timeout` seconds without requests
+   (default 300, `0` disables), and again when the agent exits;
+5. never stops an engine it did not start. If a bridge is killed hard, the
+   lease file it leaves lets the next bridge adopt the engine and stop it when
+   idle.
 
 Everything stays on the machine. No model is downloaded and no request leaves
 the loopback interface.
 
-## Configure JetBrains Air
+## Where it comes from
 
-Edit `~/.jetbrains/acp.json` and add (or replace) the `Colibri` server. Use the
-Python you want to run this shim with; absolute paths are required.
+The Colibri IDE plugin installs this file as `~/.colibri/air/colibri-acp.py`
+and writes the `Colibri` entry in `~/.jetbrains/acp.json` for you. Running the
+bridge from this checkout by hand also works; see below.
+
+## Configure JetBrains Air by hand
+
+`~/.jetbrains/acp.json`, using the Python you want to run this bridge with;
+absolute paths are required:
 
 ```json
 {
   "agent_servers": {
     "Colibri": {
-      "command": "C:/Users/you/Colibri/engine/.venv/Scripts/python.exe",
+      "command": "C:/Users/you/Colibri/.venv/Scripts/python.exe",
       "args": [
-        "C:/Users/you/Colibri-Suite/colibri-jetbrains/air/colibri-acp.py",
+        "C:/Users/you/.colibri/air/colibri-acp.py",
         "--",
         "C:/Users/you/AppData/Local/qwen-code/qwen-code/node/node.exe",
         "C:/Users/you/AppData/Local/qwen-code/qwen-code/lib/cli-entry.js",
         "--acp"
-      ],
-      "env": {
-        "QWEN_CODE_LAUNCHER_PATH": "C:/Users/you/AppData/Local/qwen-code/qwen-code/bin/qwen.cmd"
-      },
-      "use_idea_mcp": true,
-      "use_custom_mcp": true,
-      "idea_mcp_allowed_tools": []
+      ]
     }
   }
 }
 ```
 
-Restart Air after saving. The Colibri agent appears like any other ACP server;
-the engine starts on the first prompt and goes away when Air closes the session.
+Restart Air after saving. Colibri appears in Air's agent menu. (Air's Agents
+page cards come from JetBrains' remote registry; custom ACP servers appear in
+the agent selector, not as cards.)
 
 ## Resolution order
 
@@ -56,12 +62,19 @@ the engine starts on the first prompt and goes away when Air closes the session.
 | launcher | `--launcher` | — | `<engine_root>/c/coli` |
 | policy / ctx | `--policy`, `--ctx` | — | `policy`, `ctx` |
 | backend | `--backend` | `COLIBRI_BACKEND` | `backend` |
+| idle stop | `--idle-timeout` | `COLIBRI_ACP_IDLE_TIMEOUT` | `idle_timeout` |
 | API key | — | `COLIBRI_API_KEY` / `COLI_API_KEY` | never stored (local default) |
-| ACP model id | `--model-id` | `OPENAI_MODEL` | first id from `/v1/models` |
+| ACP model id | `--model-id` | `OPENAI_MODEL` | `model_id`, else derived |
 
 The shared config is `~/.colibri/config.json` (or `COLIBRI_CONFIG`). Only a
 loopback `http` origin is accepted for auto-start; remote servers must be
 configured directly in the ACP environment.
+
+The engine validates the `model` field of every request against the id it was
+started with. The bridge derives that id from the engine's own
+`family_registry` before the engine exists; if an attached engine reports a
+different id, the bridge rewrites the request's `model` field to match instead
+of failing the prompt.
 
 ### GPU backend
 
@@ -79,8 +92,10 @@ The desktop app and this bridge share the same `backend` setting.
 python colibri-acp.py --check
 ```
 
-prints the engine endpoint and model ids, or exits 1 when nothing is listening.
-The engine log for on-demand starts is `<TEMP>/colibri-acp-engine.log`.
+prints the engine endpoint, model ids and idle timeout, or exits 1 when
+nothing is listening. `--check` never starts an engine. The engine log for
+on-demand starts is `<TEMP>/colibri-acp-engine.log`; leases live next to the
+managed bridge in `~/.colibri/air/`.
 
 ## Tests
 
@@ -88,6 +103,7 @@ The engine log for on-demand starts is `<TEMP>/colibri-acp-engine.log`.
 python -m unittest discover -s air/tests -v
 ```
 
-The tests use a fake engine and a fake ACP agent: they verify spawn-on-demand,
-environment injection, exit-code propagation, and that an attached engine is
-never stopped.
+The tests use a fake engine and a fake ACP agent: they verify that the engine
+stays down until the first chat request, that listing models never starts it,
+idle stop and restart, attached engines staying warm, adoption after a hard
+kill, backend environment injection, error codes, and SSE passthrough.
