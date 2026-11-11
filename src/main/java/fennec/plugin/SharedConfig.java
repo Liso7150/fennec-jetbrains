@@ -20,15 +20,9 @@ final class SharedConfig {
         String configured = env("FENNEC_CONFIG");
         Path location = configured != null ? resolve(configured, home) : home.resolve(".fennec/config.json");
         JsonObject data = read(location);
-        String rootValue = env("FENNEC_HOME");
-        if (rootValue == null) rootValue = env("FENNEC_ENGINE_ROOT");
-        if (rootValue == null) rootValue = text(data, "engine_root", home.resolve("Colibri").toString());
-        Path root = resolve(rootValue, home);
-        Path venv = root.resolve(isWindows() ? ".venv/Scripts/python.exe" : ".venv/bin/python");
         String python = env("FENNEC_PYTHON");
         if (python == null) {
-            python = text(data, "python",
-                    Files.isRegularFile(venv) ? venv.toString() : isWindows() ? "python.exe" : "python3");
+            python = text(data, "python", isWindows() ? "python.exe" : "python3");
         }
         if (python.contains("/") || python.contains("\\") || python.startsWith("~")) {
             python = resolve(python, home).toString();

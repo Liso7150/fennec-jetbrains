@@ -34,7 +34,7 @@ absolute paths are required:
 {
   "agent_servers": {
     "Colibri": {
-      "command": "C:/Users/you/Fennec/.venv/Scripts/python.exe",
+      "command": "C:/Users/you/AppData/Local/Programs/Python/Python312/python.exe",
       "args": [
         "C:/Users/you/.fennec/air/fennec-acp.py",
         "--",

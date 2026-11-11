@@ -27,6 +27,7 @@ import ipaddress
 import json
 import os
 import signal
+import shutil
 import socket
 import subprocess
 import sys
@@ -90,9 +91,8 @@ def engine_settings(args, cfg):
         raise SystemExit("the ACP bridge only starts a local engine; set OPENAI_BASE_URL yourself for remote servers")
     port = url.port or 80
     engine_root = Path(os.environ.get("FENNEC_HOME") or cfg.get("engine_root") or Path.home() / "Colibri")
-    windows = os.name == "nt"
     python = (args.python or os.environ.get("FENNEC_PYTHON") or cfg.get("python")
-              or engine_root / ".venv" / ("Scripts/python.exe" if windows else "bin/python"))
+              or shutil.which("python") or shutil.which("python3") or sys.executable)
     settings = {
         "origin": f"http://{host}:{port}",
         "host": host,
@@ -793,7 +793,7 @@ def parser():
     ap.add_argument("--engine-url")
     ap.add_argument("--model", help="model directory to serve when the endpoint is silent")
     ap.add_argument("--model-id", help="OPENAI_MODEL override; defaults to what the engine will announce")
-    ap.add_argument("--python", help="Python runtime for the engine (defaults to <engine_root>/.venv)")
+    ap.add_argument("--python", help="Python runtime for the engine (defaults to `python` on PATH)")
     ap.add_argument("--launcher", help="engine launcher path (defaults to <engine_root>/c/coli)")
     ap.add_argument("--policy")
     ap.add_argument("--backend", help="engine backend for on-demand starts: auto, vulkan, cuda, metal or cpu")
