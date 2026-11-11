@@ -78,28 +78,54 @@ final class AirAgentRegistrar {
     }
 
     static void register(Path home, Path configDir, Path commonDataDir, Path systemDir, String version) throws IOException {
-        Path bridge = home.resolve(".fennec").resolve("air").resolve("fennec-acp.py");
-        installBridge(bridge);
-        removeLegacyPickerEntry(home, bridge);
-
-        // Launch detection kept for legacy/overlay use if needed.
-        // Launch launch = detectAgent();
+        Path launcher = home.resolve(".fennec").resolve("air").resolve("fennec-acp.py");
+        installLauncher(launcher);
+        removeLegacyPickerEntry(home, launcher);
 
         JsonObject agent = registryEntry(version);
         Path registry = home.resolve(".fennec").resolve("air").resolve("registry.json");
-        if (buildRegistry(registry, agent, systemDir)) {
+        Path overlay = home.resolve(".jetbrains").resolve("acp-registry-installed-overlay.json");
+        boolean published = buildRegistry(registry, agent, systemDir);
+        if (published) {
             String registryPath = registry.toString().replace('\\', '/');
             System.setProperty(REGISTRY_PROPERTY, registryPath);
             ensureRegistryVmOption(configDir, registryPath);
             LOG.info("Fennec registry published at " + registry + " (" + registryPath + ")");
+            // The overlay is the only place Air accepts a local command, so it is
+            // what actually launches the ACP agent on this machine.
+            writeInstalled(commonDataDir, agent);
+            writeOverlay(overlay, launcher);
         } else {
             LOG.warning("No cached Air registry found at " + systemDir.resolve("acp-agents")
                     + " and no previous Fennec registry to extend; leaving Air's catalog untouched");
+            forgetRecords(commonDataDir, overlay);
         }
+    }
 
-        // Let Air manage install/update via the registry distribution.
-        // writeInstalled(commonDataDir, agent);
-        // writeOverlay(home.resolve(".jetbrains").resolve("acp-registry-installed-overlay.json"), bridge, launch);
+    /**
+     * Air renders installed.json through the catalog, so a record whose card was
+     * never published is an agent the user can see, cannot use and cannot remove.
+     * Only our own keys go; other agents in those files are left exactly as found.
+     */
+    private static void forgetRecords(Path commonDataDir, Path overlay) {
+        removeOurKey(commonDataDir.resolve("acp-agents").resolve("installed.json"), INSTALL_KEY);
+        removeOurKey(overlay, INSTALL_KEY);
+    }
+
+    private static void removeOurKey(Path file, String key) {
+        if (!Files.isRegularFile(file)) return;
+        try {
+            JsonObject root = readJson(file);
+            if (!root.has("agents") || !root.get("agents").isJsonObject()) return;
+            JsonObject agents = root.getAsJsonObject("agents");
+            if (!agents.has(key)) return;
+            agents.remove(key);
+            agents.remove(LEGACY_INSTALL_KEY);
+            root.add("agents", agents);
+            if (writeJsonIfChanged(file, root)) LOG.info("Removed the stale Fennec record from " + file);
+        } catch (IOException | RuntimeException e) {
+            LOG.warning("Left " + file + " untouched: " + e.getMessage());
+        }
     }
 
     private static boolean airAvailable() {
@@ -125,8 +151,9 @@ final class AirAgentRegistrar {
         entry.addProperty("name", AGENT_NAME);
         entry.addProperty("version", version);
         entry.addProperty("description",
-                "Coding agent backed by the Fennec model on this machine. "
-                        + "The engine starts with the first prompt and stops after it has been idle.");
+                "Coding agent backed by the Fennec model on this machine, with optional local "
+                + "browser outlets (jev-ultrafast / OpenBot) for URL-scoped tasks. The engine "
+                + "starts with the first prompt and stops after it has been idle.");
         entry.addProperty("website", REPOSITORY);
         entry.addProperty("repository", REPOSITORY);
         JsonArray authors = new JsonArray();
@@ -134,20 +161,8 @@ final class AirAgentRegistrar {
         entry.add("authors", authors);
         entry.addProperty("license", "proprietary");
         entry.addProperty("icon", "https://raw.githubusercontent.com/Liso7150/fennec-jetbrains/main/icon.svg");
-
-        String archiveUrl = "https://github.com/Liso7150/fennec-jetbrains/releases/download/v" + version + "/fennec-acp-windows-x86_64.zip";
-        String sha256 = "d218cab56f18b6d94ba56479759e9cc7d7d1eee2ea3ff0f75009510efccabc37";
-        JsonObject binary = new JsonObject();
-        for (String platform : new String[]{"windows-x86_64", "windows-x64", "win-x64", "windows-aarch64", "win-arm64"}) {
-            JsonObject win = new JsonObject();
-            win.addProperty("archive", archiveUrl);
-            win.addProperty("sha256", sha256);
-            win.addProperty("cmd", "fennec-acp.cmd");
-            binary.add(platform, win);
-        }
-        JsonObject distribution = new JsonObject();
-        distribution.add("binary", binary);
-        entry.add("distribution", distribution);
+        // No distribution here: Air's registry only models downloadable binaries, and
+        // Fennec runs from this machine. writeOverlay carries the launch command.
         return entry;
     }
 
@@ -188,7 +203,7 @@ final class AirAgentRegistrar {
      * The installed overlay is the only place Air accepts a local command
      * distribution; the registry models it as transient by design.
      */
-    private static void writeOverlay(Path file, Path bridge, Launch launch) {
+    private static void writeOverlay(Path file, Path launcher) {
         JsonObject root;
         try {
             root = Files.isRegularFile(file) ? readJson(file) : new JsonObject();
@@ -198,17 +213,11 @@ final class AirAgentRegistrar {
         }
 
         JsonObject local = new JsonObject();
-        local.addProperty("command", SharedConfig.pythonForBridge());
+        local.addProperty("command", SharedConfig.pythonForLauncher());
         JsonArray args = new JsonArray();
-        args.add(bridge.toString());
-        args.add("--");
-        for (String part : launch.command()) args.add(part);
+        args.add(launcher.toString());
         local.add("args", args);
-        JsonObject env = new JsonObject();
-        if (launch.launcher() != null) {
-            env.addProperty("QWEN_CODE_LAUNCHER_PATH", launch.launcher().toString());
-        }
-        local.add("env", env);
+        local.add("env", new JsonObject());
 
         JsonObject distribution = new JsonObject();
         distribution.add("local", local);
@@ -326,7 +335,7 @@ final class AirAgentRegistrar {
         return configDir.resolve(name);
     }
 
-    private static void installBridge(Path target) throws IOException {
+    private static void installLauncher(Path target) throws IOException {
         byte[] content;
         try (InputStream in = AirAgentRegistrar.class.getResourceAsStream("/fennec/air/fennec-acp.py")) {
             if (in == null) throw new IOException("fennec-acp.py is missing from the plugin");
@@ -335,16 +344,16 @@ final class AirAgentRegistrar {
         if (Files.isRegularFile(target) && Arrays.equals(Files.readAllBytes(target), content)) return;
         Files.createDirectories(target.getParent());
         Files.write(target, content);
-        LOG.info("Installed the Fennec bridge at " + target);
+        LOG.info("Installed the Fennec ACP launcher at " + target);
     }
 
     /**
      * 1.3.0 registered itself through acp.json under the pre-rebrand name
      * "Colibri"; such an entry would linger in Air's picker next to the registry
-     * card. Only entries that point at the managed bridge are removed - other
+     * card. Only entries that point at the managed launcher are removed - other
      * custom agents are left alone.
      */
-    private static void removeLegacyPickerEntry(Path home, Path bridge) {
+    private static void removeLegacyPickerEntry(Path home, Path launcher) {
         Path file = home.resolve(".jetbrains").resolve("acp.json");
         if (!Files.isRegularFile(file)) return;
         try {
@@ -353,7 +362,7 @@ final class AirAgentRegistrar {
             JsonObject servers = root.getAsJsonObject("agent_servers");
             if (!servers.has("Colibri") || !servers.get("Colibri").isJsonObject()) return;
             JsonObject entry = servers.getAsJsonObject("Colibri");
-            if (!pointsAtBridge(entry, bridge)) return;
+            if (!pointsAtLauncher(entry, launcher)) return;
             backupOnce(file);
             servers.remove("Colibri");
             writeJson(file, root);
@@ -363,8 +372,8 @@ final class AirAgentRegistrar {
         }
     }
 
-    private static boolean pointsAtBridge(JsonObject entry, Path bridge) {
-        String needle = normalizePath(bridge.toString());
+    private static boolean pointsAtLauncher(JsonObject entry, Path launcher) {
+        String needle = normalizePath(launcher.toString());
         for (String arg : strings(entry.get("args"))) {
             if (normalizePath(arg).equals(needle)) return true;
         }
@@ -407,43 +416,6 @@ final class AirAgentRegistrar {
         } catch (IOException e) {
             return 0L;
         }
-    }
-
-    private static Launch detectAgent() {
-        String localAppData = System.getenv("LOCALAPPDATA");
-        if (localAppData != null && !localAppData.isBlank()) {
-            Path dir = Path.of(localAppData, "qwen-code", "qwen-code");
-            Path node = dir.resolve("node").resolve(SharedConfig.isWindows() ? "node.exe" : "node");
-            Path script = dir.resolve("lib").resolve("cli-entry.js");
-            Path launcher = dir.resolve("bin").resolve(SharedConfig.isWindows() ? "qwen.cmd" : "qwen");
-            if (Files.isRegularFile(node) && Files.isRegularFile(script)) {
-                return new Launch(new ArrayList<>(List.of(node.toString(), script.toString(), "--acp")),
-                        Files.isRegularFile(launcher) ? launcher : null);
-            }
-        }
-        if (SharedConfig.isWindows()) {
-            String qwenExe = findOnPath("qwen.exe");
-            if (qwenExe != null) return new Launch(new ArrayList<>(List.of(qwenExe, "--acp")), null);
-            String qwenCmd = findOnPath("qwen.cmd");
-            if (qwenCmd != null) {
-                return new Launch(new ArrayList<>(List.of("cmd.exe", "/c", qwenCmd, "--acp")), Path.of(qwenCmd));
-            }
-        } else {
-            String qwen = findOnPath("qwen");
-            if (qwen != null) return new Launch(new ArrayList<>(List.of(qwen, "--acp")), Path.of(qwen));
-        }
-        return null;
-    }
-
-    private static String findOnPath(String name) {
-        String path = System.getenv("PATH");
-        if (path == null) return null;
-        for (String entry : path.split(java.io.File.pathSeparator)) {
-            if (entry.isBlank()) continue;
-            Path candidate = Path.of(entry).resolve(name);
-            if (Files.isRegularFile(candidate)) return candidate.toString();
-        }
-        return null;
     }
 
     private static JsonObject readJson(Path file) throws IOException {
@@ -525,6 +497,4 @@ final class AirAgentRegistrar {
             Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING);
         }
     }
-
-    private record Launch(List<String> command, Path launcher) {}
 }

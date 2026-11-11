@@ -15,19 +15,56 @@ import java.util.Locale;
 final class SharedConfig {
     private SharedConfig() {}
 
-    static String pythonForBridge() {
+    /**
+     * The interpreter the overlay spawns, resolved the way fennec-core resolves
+     * its own config: a blank or bare value is searched on PATH, a path is made
+     * absolute, and the answer is never an empty string Air cannot exec.
+     */
+    static String pythonForLauncher() {
         Path home = Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
         String configured = env("FENNEC_CONFIG");
         Path location = configured != null ? resolve(configured, home) : home.resolve(".fennec/config.json");
         JsonObject data = read(location);
         String python = env("FENNEC_PYTHON");
         if (python == null) {
-            python = text(data, "python", isWindows() ? "python.exe" : "python3");
+            JsonElement value = data.get("python");
+            if (value != null && !value.isJsonNull()) {
+                if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
+                    throw new IllegalArgumentException("Fennec configuration field must be a string: python");
+                }
+                python = value.getAsString();
+            }
         }
-        if (python.contains("/") || python.contains("\\") || python.startsWith("~")) {
+        if (python == null || python.isBlank()) {
+            python = search(isWindows() ? new String[] {"python.exe", "python3.exe"}
+                                        : new String[] {"python3", "python"});
+        } else if (!python.startsWith("~") && !isPathLike(python)) {
+            python = search(new String[] {python});
+        } else {
             python = resolve(python, home).toString();
         }
         return python;
+    }
+
+    private static boolean isPathLike(String value) {
+        return value.contains("/") || value.contains("\\");
+    }
+
+    /** A bare name is what the config stores; PATH is what makes it an executable. */
+    private static String search(String[] names) {
+        String path = System.getenv("PATH");
+        if (path != null) {
+            for (String directory : path.split(java.io.File.pathSeparator)) {
+                if (directory.isBlank()) continue;
+                for (String name : names) {
+                    Path candidate = Path.of(directory).resolve(name);
+                    if (Files.isRegularFile(candidate) && Files.isExecutable(candidate)) {
+                        return candidate.toAbsolutePath().normalize().toString();
+                    }
+                }
+            }
+        }
+        return names[0];
     }
 
     static boolean isWindows() {
@@ -50,15 +87,6 @@ final class SharedConfig {
         } catch (IOException | RuntimeException e) {
             throw new IllegalArgumentException("Cannot read Fennec configuration: " + location, e);
         }
-    }
-
-    private static String text(JsonObject data, String key, String fallback) {
-        JsonElement value = data.get(key);
-        if (value == null) return fallback;
-        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
-            throw new IllegalArgumentException("Fennec configuration field must be a string: " + key);
-        }
-        return value.getAsString();
     }
 
     private static String env(String name) {

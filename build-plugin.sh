@@ -42,7 +42,7 @@ cd "$HERE"
 
 cp -r "$HERE/src/main/resources/." "$CLASSES/"
 
-# The Air bridge is a resource the plugin installs into ~/.fennec/air.
+# The Air ACP launcher is a resource the plugin installs into ~/.fennec/air.
 mkdir -p "$CLASSES/fennec/air"
 cp "$HERE/air/fennec-acp.py" "$CLASSES/fennec/air/fennec-acp.py"
 

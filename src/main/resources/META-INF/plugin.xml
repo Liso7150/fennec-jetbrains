@@ -7,11 +7,14 @@
   <description><![CDATA[
     <p>Adds <b>Fennec</b> to JetBrains Air as an installed agent card, backed by a model running
     on this machine.</p>
-    <p>The plugin installs a managed ACP bridge, publishes Fennec through Air's agent registry, and
+    <p>The plugin installs a managed ACP launcher, publishes Fennec through Air's agent registry, and
     registers its local launch command in Air's installed overlay. The card can be enabled, disabled
     and removed from Air's Agents page like any other agent. The engine starts on the first prompt,
     not when Air opens, and stops after it has been idle, so an open IDE costs no model memory. An
     engine that was already running is attached to and left alone.</p>
+    <p>ACP itself is implemented once, in fennec-core, so the IDE, the desktop app, the CLI and the
+    browser agents share the same protocol behaviour. Optional local browser outlets (jev-ultrafast,
+    OpenBot) handle URL-scoped tasks when they are running.</p>
   ]]></description>
 
   <depends>com.intellij.modules.platform</depends>

@@ -1,109 +1,117 @@
-# Fennec ACP bridge for JetBrains Air
+# Fennec ACP launcher for JetBrains Air
 
-JetBrains Air talks to agents over the Agent Client Protocol (stdio). This
-stdlib-only bridge makes Fennec work there while keeping model memory off
-until it is actually needed:
+JetBrains Air talks to agents over the Agent Client Protocol (ACP, stdio JSON-RPC).
+This file is the entry point Air starts; **the protocol lives in fennec-core**, so
+the IDE, the desktop app, the CLI and the browser agents all share one ACP
+implementation instead of four dialects.
 
-1. starts the real ACP agent (Qwen Code) with `OPENAI_BASE_URL`,
-   `OPENAI_API_KEY` and `OPENAI_MODEL` pointing at a loopback proxy it owns;
-2. starts `coli serve` behind that proxy **on the first proxied request**, not
-   when Air launches the agent;
-3. proxies OpenAI-compatible traffic in both directions, including chunked SSE
-   streaming, so answers stream while they are generated;
-4. stops an engine it owns after `--idle-timeout` seconds without requests
-   (default 300, `0` disables), and again when the agent exits;
-5. never stops an engine it did not start. If a bridge is killed hard, the
-   lease file it leaves lets the next bridge adopt the engine and stop it when
-   idle.
+The launcher does three things:
 
-Everything stays on the machine. No model is downloaded and no request leaves
-the loopback interface.
+1. Finds the `fennec_core` package on this machine (table below).
+2. Puts that checkout on `sys.path` and imports `fennec_core.acp`.
+3. Calls its `main()`, which speaks ACP v1 over stdio: `initialize`,
+   `session/new`, `session/load`, `session/resume`, `session/list`,
+   `session/close`, `session/set_mode`, `session/prompt` with streamed
+   `session/update` chunks, `session/cancel` notifications, and
+   `session/request_permission` before any gated tool call.
 
-## Where it comes from
+Behaviour that Air sees - lazy engine start on the first prompt, streamed
+`agent_message_chunk` / `agent_thought_chunk` updates, an owned engine stopped
+after the idle timeout, an attached engine left running - is implemented and
+tested in [`fennec-core/fennec_core/acp.py`](../../fennec-core/fennec_core/acp.py).
+Stdlib only here; nothing is downloaded and no request leaves the loopback
+interface.
 
-The Fennec IDE plugin installs this file as `~/.fennec/air/fennec-acp.py`
-and writes the `Fennec` entry in `~/.jetbrains/acp.json` for you. Running the
-bridge from this checkout by hand also works; see below.
+## Finding fennec-core
 
-## Configure JetBrains Air by hand
+| Order | Source | Value |
+|---|---|---|
+| 1 | `FENNEC_CORE` | a directory holding `fennec_core/acp.py` |
+| 2 | `FENNEC_SUITE`, then `suite_root` in `~/.fennec/config.json` | `<suite>/fennec-core` |
+| 3 | next to a checkout | `<launcher>/../../fennec-core` |
+| 4 | installed package | `import fennec_core` from the interpreter's environment |
 
-`~/.jetbrains/acp.json`, using the Python you want to run this bridge with;
-absolute paths are required:
+A candidate only counts when it carries `fennec_core/acp.py`: a fennec-core from
+before the ACP agent has the package and not the module, and importing it is a
+traceback Air cannot show. The first candidate that qualifies wins, so an old
+sibling checkout never shadows a usable one.
 
-```json
-{
-  "agent_servers": {
-    "Colibri": {
-      "command": "C:/Users/you/AppData/Local/Programs/Python/Python312/python.exe",
-      "args": [
-        "C:/Users/you/.fennec/air/fennec-acp.py",
-        "--",
-        "C:/Users/you/AppData/Local/qwen-code/qwen-code/node/node.exe",
-        "C:/Users/you/AppData/Local/qwen-code/qwen-code/lib/cli-entry.js",
-        "--acp"
-      ]
-    }
-  }
-}
-```
+The interpreter itself comes from the shared config (`python`, or
+`FENNEC_PYTHON`), resolved the way fennec-core resolves it - a bare name is
+searched on `PATH`, a path is made absolute - and is chosen by the plugin when it
+writes Air's launch overlay, because Air does not inherit the terminal's `PATH`.
+If nothing is found, the launcher exits `2` and names the directories it searched.
 
-Restart Air after saving. Fennec appears in Air's agent menu. (Air's Agents
-page cards come from JetBrains' remote registry; custom ACP servers appear in
-the agent selector, not as cards.)
+## Flags
 
-## Resolution order
+| Flag | Effect |
+|---|---|
+| `--check` | print the capabilities the agent advertises, then exit; never starts an engine |
+| `--version` | print `fennec-acp 1.9.0` |
 
-| Setting | Flags | Environment | Shared config |
-|---|---|---|---|
-| engine URL | `--engine-url` | `FENNEC_ENGINE_URL` | `engine_url` |
-| model dir | `--model` | `FENNEC_MODEL` | `model` |
-| Python | `--python` | `FENNEC_PYTHON` | `python` |
-| engine root | — | `FENNEC_HOME` | `engine_root` |
-| launcher | `--launcher` | — | `<engine_root>/c/coli` |
-| policy / ctx | `--policy`, `--ctx` | — | `policy`, `ctx` |
-| backend | `--backend` | `FENNEC_BACKEND` | `backend` |
-| idle stop | `--idle-timeout` | `FENNEC_ACP_IDLE_TIMEOUT` | `idle_timeout` |
-| API key | — | `FENNEC_API_KEY` / `COLI_API_KEY` | never stored (local default) |
-| ACP model id | `--model-id` | `OPENAI_MODEL` | `model_id`, else derived |
-
-The shared config is `~/.fennec/config.json` (or `FENNEC_CONFIG`). Only a
-loopback `http` origin is accepted for auto-start; remote servers must be
-configured directly in the ACP environment.
-
-The engine validates the `model` field of every request against the id it was
-started with. The bridge derives that id from the engine's own
-`family_registry` before the engine exists; if an attached engine reports a
-different id, the bridge rewrites the request's `model` field to match instead
-of failing the prompt.
-
-### GPU backend
-
-`coli serve` has no `--backend` flag: the engine picks its backend from
-`COLI_VULKAN`, `COLI_CUDA` and `COLI_METAL` (`=1` on, `=0` off). When the
-resolved backend is not `auto`, the bridge sets all three variables explicitly
-(the chosen one to `1`, the rest to `0`) before spawning the engine, so a
-configured GPU is actually used. With `auto` the engine keeps its own default
-(CPU+SSD), which is why the log line `[VK] … COLI_VULKAN is not set` appears.
-The desktop app and this bridge share the same `backend` setting.
-
-## Check it
+Anything else is rejected before the import: ACP tuning knobs belong to the
+shared config, not to a second CLI.
 
 ```bash
 python fennec-acp.py --check
 ```
 
-prints the engine endpoint, model ids and idle timeout, or exits 1 when
-nothing is listening. `--check` never starts an engine. The engine log for
-on-demand starts is `<TEMP>/fennec-acp-engine.log`; leases live next to the
-managed bridge in `~/.fennec/air/`.
+```json
+{
+  "protocolVersion": 1, "version": "1.9.0", "agent": "fennec", "transport": "stdio",
+  "methods": ["$/cancel_request", "exit", "initialize", "session/cancel", "session/close",
+              "session/list", "session/load", "session/new", "session/prompt",
+              "session/resume", "session/set_mode"],
+  "modes": ["agent", "ask"], "engineRunning": false,
+  "outlets": {"jev": {"present": false}, "openbot": {"present": false}}
+}
+```
+
+Only methods the agent actually answers are listed - an advertised method Air
+cannot use is worse than an absent one.
+
+## JetBrains Air integration
+
+The Fennec IDE plugin installs this file as `~/.fennec/air/fennec-acp.py` and
+publishes Fennec through Air's agent registry (plugin v1.9.0). The registry entry
+carries no binary distribution: Air treats a local command as transient, so the
+plugin writes the launch command into
+`~/.jetbrains/acp-registry-installed-overlay.json` and records the agent as
+installed in Air's shared `installed.json` - **only when a catalog entry was
+actually published**. Air renders those records through the catalog, so without
+one they would be an agent the user can see, cannot use and cannot remove; when
+publication is skipped (no cached Air registry yet) the plugin takes its own
+records back out and leaves other agents in those files alone.
+
+## Browser / web-agent outlets (optional)
+
+Fennec can hand a solvable, URL-scoped browser task to a local web agent and read
+the result back. It is a fennec-core outlet, gated by the same approval as every
+other tool, and never required for the coding flow. The targets are local, and
+their credentials and traces stay with them.
+
+- **jev-ultrafast** (https://github.com/browser-use/jev-ultrafast): a fast,
+  single-model browser loop that picks an operation and a compatible element
+  index from an indexed page snapshot. Give the **end state**, not the hops.
+- **OpenBot** (https://github.com/CopilotKit/OpenBot): a shared local workspace of
+  agents, each with its own browser, files, role, conversation and queue.
+
+Neither upstream is modified or vendored; Fennec only drives what is already
+installed and speaks to it over loopback.
+
+## Model
+
+A local model folder must contain `config.json` and weight files
+(`.safetensors` / `.gguf`). Run `fennec setup`, set `"model"` in
+`~/.fennec/config.json`, or place a model under the configured `models_root`
+(`~/fennec-models/` by default).
 
 ## Tests
 
 ```bash
-python -m unittest discover -s air/tests -v
+python -m pytest air/tests -q
 ```
 
-The tests use a fake engine and a fake ACP agent: they verify that the engine
-stays down until the first chat request, that listing models never starts it,
-idle stop and restart, attached engines staying warm, adoption after a hard
-kill, backend environment injection, error codes, and SSE passthrough.
+Discovery, precedence, flag forwarding and the missing-core message are covered
+against a fake fennec-core in a temporary home. The protocol itself is tested in
+`fennec-core/tests/test_acp.py`.
