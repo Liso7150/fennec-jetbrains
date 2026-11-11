@@ -82,12 +82,8 @@ final class AirAgentRegistrar {
         installBridge(bridge);
         removeLegacyPickerEntry(home, bridge);
 
-        Launch launch = detectAgent();
-        if (launch == null) {
-            LOG.warning("Fennec Air agent not published: no ACP agent command found. "
-                    + "Install Qwen Code or put its command into the Fennec registry entry.");
-            return;
-        }
+        // Launch detection kept for legacy/overlay use if needed.
+        // Launch launch = detectAgent();
 
         JsonObject agent = registryEntry(version);
         Path registry = home.resolve(".fennec").resolve("air").resolve("registry.json");
@@ -101,8 +97,9 @@ final class AirAgentRegistrar {
                     + " and no previous Fennec registry to extend; leaving Air's catalog untouched");
         }
 
-        writeInstalled(commonDataDir, agent);
-        writeOverlay(home.resolve(".jetbrains").resolve("acp-registry-installed-overlay.json"), bridge, launch);
+        // Let Air manage install/update via the registry distribution.
+        // writeInstalled(commonDataDir, agent);
+        // writeOverlay(home.resolve(".jetbrains").resolve("acp-registry-installed-overlay.json"), bridge, launch);
     }
 
     private static boolean airAvailable() {
@@ -136,8 +133,16 @@ final class AirAgentRegistrar {
         authors.add("Fennec Desktop");
         entry.add("authors", authors);
         entry.addProperty("license", "proprietary");
-        entry.add("distribution", new JsonObject());
-        entry.addProperty("bundled", true);
+
+        JsonObject win = new JsonObject();
+        win.addProperty("archive", "https://github.com/Liso7150/fennec-jetbrains/releases/download/v" + version + "/fennec-acp-windows-x86_64.zip");
+        win.addProperty("sha256", "6c47be22b6f81a8b069a876e346a3d91917930660a5cdb12b413e32dee573ed2");
+        win.addProperty("cmd", "fennec-acp.cmd");
+        JsonObject binary = new JsonObject();
+        binary.add("windows-x86_64", win);
+        JsonObject distribution = new JsonObject();
+        distribution.add("binary", binary);
+        entry.add("distribution", distribution);
         return entry;
     }
 

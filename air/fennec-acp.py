@@ -857,6 +857,26 @@ def strip_separator(argv):
     return argv[1:] if argv and argv[0] == "--" else argv
 
 
+def detect_agent():
+    """Detect qwen-code or other ACP agent to wrap."""
+    import shutil
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    if local_app_data:
+        base = Path(local_app_data) / "qwen-code" / "qwen-code"
+        node = base / "node" / ("node.exe" if os.name == "nt" else "node")
+        script = base / "lib" / "cli-entry.js"
+        if node.is_file() and script.is_file():
+            return [str(node), str(script), "--acp"]
+    # Try PATH
+    for name in (["qwen.exe", "qwen.cmd"] if os.name == "nt" else ["qwen"]):
+        found = shutil.which(name)
+        if found:
+            if name.endswith(".cmd"):
+                return ["cmd.exe", "/c", found, "--acp"]
+            return [found, "--acp"]
+    return None
+
+
 def main(argv=None):
     args = parser().parse_args(argv)
     cfg = shared_config()
@@ -875,9 +895,11 @@ def main(argv=None):
     declared = resolve_model_id(settings, models)
     if not declared:
         raise SystemExit("cannot determine the model id; pass --model-id")
-    command = strip_separator(args.acp)
+    command = strip_separator(args.acp or [])
     if not command:
-        raise SystemExit("no ACP command; put the agent command after -- (see air/README.md)")
+        command = detect_agent()
+    if not command:
+        raise SystemExit("no ACP command found; install Qwen Code or pass the agent command after --")
 
     lease = read_lease(lease_path_for(settings))
     server = None
