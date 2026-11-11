@@ -136,7 +136,7 @@ final class AirAgentRegistrar {
 
         JsonObject win = new JsonObject();
         win.addProperty("archive", "https://github.com/Liso7150/fennec-jetbrains/releases/download/v" + version + "/fennec-acp-windows-x86_64.zip");
-        win.addProperty("sha256", "f7c9f41a4c35a1744b9b123048d811fa328a37b18a00e2b0605a4b6c0bf02e71");
+        win.addProperty("sha256", "991be7068f8de7a6efebd4fe8d8f6623c7cf7e86ebdcbc48a5d58f57fee15e99");
         win.addProperty("cmd", "fennec-acp.cmd");
         JsonObject binary = new JsonObject();
         binary.add("windows-x86_64", win);
