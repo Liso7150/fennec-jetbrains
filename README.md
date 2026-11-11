@@ -3,7 +3,7 @@
 A dependency-free Fennec plugin for JetBrains Air, built around the engine idea
 from [Colibri](https://github.com/JustVugg/colibri). It has no tool window of its
 own: it publishes **Fennec** as an agent card in Air and installs the ACP launcher
-behind it. Everything runs on this machine. Plugin version: **1.9.0**.
+behind it. Everything runs on this machine. Plugin version: **2.0.0**.
 
 ## What it does
 
@@ -50,7 +50,7 @@ whether each outlet is present.
 ## Build
 
 ```bash
-./build-plugin.sh    # compiles against the IDE JBR, outputs build/Fennec-plugin-1.9.0.zip
+./build-plugin.sh    # compiles against the IDE JBR, outputs build/Fennec-plugin-2.0.0.zip
 ```
 
 Set `FENNEC_IDE_PLATFORM` to any IntelliJ-based IDE install (263.x) if the default

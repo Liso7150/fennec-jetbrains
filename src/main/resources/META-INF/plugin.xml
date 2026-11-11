@@ -1,7 +1,7 @@
 <idea-plugin>
   <id>com.fennec.ide</id>
   <name>Fennec</name>
-  <version>1.9.0</version>
+  <version>2.0.0</version>
   <vendor>Fennec</vendor>
 
   <description><![CDATA[

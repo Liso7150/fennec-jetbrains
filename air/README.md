@@ -47,7 +47,7 @@ If nothing is found, the launcher exits `2` and names the directories it searche
 | Flag | Effect |
 |---|---|
 | `--check` | print the capabilities the agent advertises, then exit; never starts an engine |
-| `--version` | print `fennec-acp 1.9.0` |
+| `--version` | print `fennec-acp 2.0.0` |
 
 Anything else is rejected before the import: ACP tuning knobs belong to the
 shared config, not to a second CLI.
@@ -58,7 +58,7 @@ python fennec-acp.py --check
 
 ```json
 {
-  "protocolVersion": 1, "version": "1.9.0", "agent": "fennec", "transport": "stdio",
+  "protocolVersion": 1, "version": "2.0.0", "agent": "fennec", "transport": "stdio",
   "methods": ["$/cancel_request", "exit", "initialize", "session/cancel", "session/close",
               "session/list", "session/load", "session/new", "session/prompt",
               "session/resume", "session/set_mode"],
@@ -73,7 +73,7 @@ cannot use is worse than an absent one.
 ## JetBrains Air integration
 
 The Fennec IDE plugin installs this file as `~/.fennec/air/fennec-acp.py` and
-publishes Fennec through Air's agent registry (plugin v1.9.0). The registry entry
+publishes Fennec through Air's agent registry (plugin v2.0.0). The registry entry
 carries no binary distribution: Air treats a local command as transient, so the
 plugin writes the launch command into
 `~/.jetbrains/acp-registry-installed-overlay.json` and records the agent as
