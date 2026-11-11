@@ -93,7 +93,26 @@ def engine_settings(args, cfg):
     engine_root = Path(os.environ.get("FENNEC_HOME") or cfg.get("engine_root") or Path.home() / "Colibri")
     python = (args.python or os.environ.get("FENNEC_PYTHON") or cfg.get("python")
               or shutil.which("python") or shutil.which("python3") or sys.executable)
-    model = args.model or os.environ.get("FENNEC_MODEL") or find_model(cfg) or ""
+    model = args.model or os.environ.get("FENNEC_MODEL") or cfg.get("model") or ""
+    if not model or not Path(model).is_dir():
+        discovered = find_model(cfg)
+        if discovered and Path(discovered).is_dir():
+            model = discovered
+            # Persist discovered model so future runs don't need to scan
+            try:
+                config_path = Path(os.environ.get("FENNEC_CONFIG") or Path.home() / ".fennec" / "config.json")
+                if config_path.is_file():
+                    data = json.loads(config_path.read_text(encoding="utf-8"))
+                    if isinstance(data, dict) and not data.get("model"):
+                        data["model"] = model
+                        config_path.write_text(json.dumps(data, indent=2) + "
+", encoding="utf-8")
+                elif not config_path.exists():
+                    config_path.parent.mkdir(parents=True, exist_ok=True)
+                    config_path.write_text(json.dumps({"model": model}, indent=2) + "
+", encoding="utf-8")
+            except Exception:
+                pass
     settings = {
         "origin": f"http://{host}:{port}",
         "host": host,
@@ -227,7 +246,7 @@ def engine_models(origin, api_key):
 
 def validate_start(settings):
     if not settings["model"] or not Path(settings["model"]).is_dir():
-        raise SystemExit("no local model configured; pass --model /path/to/model or set model in ~/.fennec/config.json")
+        raise SystemExit("No local Fennec model found. To set up: (1) run `fennec setup` in a terminal, or (2) set \"model\" in ~/.fennec/config.json to your model folder path, or (3) place a model in ~/Fennec/models/ or ~/fennec-models/. The model folder must contain config.json and weight files (.safetensors/.gguf).")
     if not Path(settings["python"]).is_file():
         raise SystemExit(f"Python runtime not found: {settings['python']}")
     if not Path(settings["launcher"]).is_file():
@@ -273,7 +292,7 @@ def resolve_model_id(settings, running_models):
 
 def start_engine(settings, engine_origin):
     if not settings["model"] or not Path(settings["model"]).is_dir():
-        raise BridgeError("no local model configured; pass --model /path/to/model or set model in ~/.fennec/config.json")
+        raise BridgeError("No local Fennec model found. Run `fennec setup`, set \"model\" in ~/.fennec/config.json, or place a model in ~/Fennec/models/.")
     if not Path(settings["python"]).is_file():
         raise BridgeError(f"Python runtime not found: {settings['python']}")
     if not Path(settings["launcher"]).is_file():
