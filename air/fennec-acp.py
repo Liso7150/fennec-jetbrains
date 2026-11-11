@@ -93,12 +93,13 @@ def engine_settings(args, cfg):
     engine_root = Path(os.environ.get("FENNEC_HOME") or cfg.get("engine_root") or Path.home() / "Colibri")
     python = (args.python or os.environ.get("FENNEC_PYTHON") or cfg.get("python")
               or shutil.which("python") or shutil.which("python3") or sys.executable)
+    model = args.model or os.environ.get("FENNEC_MODEL") or find_model(cfg) or ""
     settings = {
         "origin": f"http://{host}:{port}",
         "host": host,
         "port": port,
         "engine_root": str(engine_root),
-        "model": args.model or os.environ.get("FENNEC_MODEL") or cfg.get("model") or "",
+        "model": model,
         "python": str(python),
         "launcher": str(args.launcher or engine_root / "c" / "coli"),
         "policy": args.policy or cfg.get("policy") or "balanced",
@@ -128,6 +129,53 @@ def idle_seconds(args, cfg):
     if value < 0:
         raise SystemExit("idle timeout must be zero (never stop) or a number of seconds")
     return value
+
+
+
+def scan_models(directory):
+    """Scan for model directories."""
+    try:
+        root = Path(directory).expanduser()
+        if not root.is_dir():
+            return []
+        models = []
+        for entry in sorted(root.iterdir()):
+            if not entry.is_dir():
+                continue
+            try:
+                files = [item for item in entry.iterdir() if item.is_file()]
+            except OSError:
+                continue
+            has_config = (entry / "config.json").is_file()
+            weights = [item for item in files if item.suffix.lower() in {".safetensors", ".gguf"}]
+            if has_config and weights:
+                models.append(entry)
+        return models
+    except Exception:
+        return []
+
+
+def find_model(cfg):
+    """Find a model automatically."""
+    model = cfg.get("model", "")
+    if model and Path(model).is_dir():
+        return model
+    models_root = cfg.get("models_root")
+    if models_root:
+        models = scan_models(models_root)
+        if models:
+            return str(models[0])
+    home = Path.home()
+    for candidate in [
+        home / "Fennec" / "models",
+        home / "fennec-models",
+        home / "Colibri" / "models",
+        home / ".local" / "share" / "fennec" / "models",
+    ]:
+        models = scan_models(candidate)
+        if models:
+            return str(models[0])
+    return model
 
 
 def free_port(host):
