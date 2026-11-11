@@ -51,7 +51,7 @@ final class AirAgentRegistrar {
     // Pre-rebrand releases published under these; leaving them behind shows a second, dead card.
     private static final String LEGACY_AGENT_ID = "colibri";
     private static final String LEGACY_INSTALL_KEY = "acp.registry." + LEGACY_AGENT_ID;
-    private static final String AGENT_NAME = "Fennec Desktop";
+    private static final String AGENT_NAME = "Fennec";
     private static final String REPOSITORY = "https://github.com/Liso7150/fennec-jetbrains";
     private static final String AIR_PLUGIN_ID = "com.intellij.air";
     private static final String PLUGIN_ID = "com.fennec.ide";
@@ -130,16 +130,20 @@ final class AirAgentRegistrar {
         entry.addProperty("website", REPOSITORY);
         entry.addProperty("repository", REPOSITORY);
         JsonArray authors = new JsonArray();
-        authors.add("Fennec Desktop");
+        authors.add("Fennec");
         entry.add("authors", authors);
         entry.addProperty("license", "proprietary");
 
-        JsonObject win = new JsonObject();
-        win.addProperty("archive", "https://github.com/Liso7150/fennec-jetbrains/releases/download/v" + version + "/fennec-acp-windows-x86_64.zip");
-        win.addProperty("sha256", "d218cab56f18b6d94ba56479759e9cc7d7d1eee2ea3ff0f75009510efccabc37");
-        win.addProperty("cmd", "fennec-acp.cmd");
+        String archiveUrl = "https://github.com/Liso7150/fennec-jetbrains/releases/download/v" + version + "/fennec-acp-windows-x86_64.zip";
+        String sha256 = "d218cab56f18b6d94ba56479759e9cc7d7d1eee2ea3ff0f75009510efccabc37";
         JsonObject binary = new JsonObject();
-        binary.add("windows-x86_64", win);
+        for (String platform : new String[]{"windows-x86_64", "windows-x64", "win-x64", "windows-aarch64", "win-arm64"}) {
+            JsonObject win = new JsonObject();
+            win.addProperty("archive", archiveUrl);
+            win.addProperty("sha256", sha256);
+            win.addProperty("cmd", "fennec-acp.cmd");
+            binary.add(platform, win);
+        }
         JsonObject distribution = new JsonObject();
         distribution.add("binary", binary);
         entry.add("distribution", distribution);
