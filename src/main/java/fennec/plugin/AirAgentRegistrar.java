@@ -56,7 +56,7 @@ final class AirAgentRegistrar {
     private static final String AIR_PLUGIN_ID = "com.intellij.air";
     private static final String PLUGIN_ID = "com.fennec.ide";
     private static final String REGISTRY_PROPERTY = "air.acp.registry.path";
-    private static final String FALLBACK_VERSION = "1.4.0";
+    private static final String FALLBACK_VERSION = "1.9.0";
 
     private AirAgentRegistrar() {}
 
@@ -136,7 +136,10 @@ final class AirAgentRegistrar {
         authors.add("Fennec Desktop");
         entry.add("authors", authors);
         entry.addProperty("license", "proprietary");
-        entry.add("distribution", new JsonObject());
+        JsonObject distribution = new JsonObject();
+        distribution.add("binary", com.google.gson.JsonNull.INSTANCE);
+        distribution.add("npx", com.google.gson.JsonNull.INSTANCE);
+        entry.add("distribution", distribution);
         entry.addProperty("bundled", false);
         return entry;
     }
