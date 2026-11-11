@@ -166,12 +166,22 @@ def find_model(cfg):
         if models:
             return str(models[0])
     home = Path.home()
-    for candidate in [
+    candidates = [
         home / "Fennec" / "models",
         home / "fennec-models",
         home / "Colibri" / "models",
         home / ".local" / "share" / "fennec" / "models",
-    ]:
+        home / "models",
+    ]
+    # Scan common drive roots on Windows
+    if os.name == "nt":
+        for drive in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+            root = Path(f"{drive}:/")
+            if not root.exists():
+                continue
+            for name in ["models", "fennec-models", "colibri-models", "MEGAsync-sync/colibri-models", "MEGAsync-sync/models"]:
+                candidates.append(root / name)
+    for candidate in candidates:
         models = scan_models(candidate)
         if models:
             return str(models[0])
