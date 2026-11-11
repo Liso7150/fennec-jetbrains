@@ -1,11 +1,11 @@
 <idea-plugin>
   <id>com.fennec.ide</id>
-  <name>Fennec Desktop</name>
+  <name>Fennec</name>
   <version>1.9.0</version>
-  <vendor>Fennec Desktop</vendor>
+  <vendor>Fennec</vendor>
 
   <description><![CDATA[
-    <p>Adds <b>Fennec Desktop</b> to JetBrains Air as an installed agent card, backed by a model running
+    <p>Adds <b>Fennec</b> to JetBrains Air as an installed agent card, backed by a model running
     on this machine.</p>
     <p>The plugin installs a managed ACP bridge, publishes Fennec through Air's agent registry, and
     registers its local launch command in Air's installed overlay. The card can be enabled, disabled

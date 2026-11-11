@@ -133,6 +133,7 @@ final class AirAgentRegistrar {
         authors.add("Fennec");
         entry.add("authors", authors);
         entry.addProperty("license", "proprietary");
+        entry.addProperty("icon", "https://raw.githubusercontent.com/Liso7150/fennec-jetbrains/main/icon.svg");
 
         String archiveUrl = "https://github.com/Liso7150/fennec-jetbrains/releases/download/v" + version + "/fennec-acp-windows-x86_64.zip";
         String sha256 = "d218cab56f18b6d94ba56479759e9cc7d7d1eee2ea3ff0f75009510efccabc37";
