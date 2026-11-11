@@ -56,7 +56,7 @@ NOTE
 cp "$OUT/plugin-zip-note.txt" "$DIST/README.txt"
 
 VERSION="$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' "$HERE/src/main/resources/META-INF/plugin.xml" | head -n1)"
-ZIP="$OUT/Fennec-plugin.zip"
+ZIP="$OUT/Fennec-plugin-$VERSION.zip"
 ( cd "$OUT" && "$JAR" --create --file "$ZIP" -C "$OUT" fennec-desktop )
 
 echo "jar:  $DIST/lib/fennec-desktop.jar"
