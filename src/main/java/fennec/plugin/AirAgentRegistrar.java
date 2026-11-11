@@ -136,15 +136,8 @@ final class AirAgentRegistrar {
         authors.add("Fennec Desktop");
         entry.add("authors", authors);
         entry.addProperty("license", "proprietary");
-        JsonObject npx = new JsonObject();
-        npx.addProperty("package", "fennec-desktop@1.9.0");
-        JsonArray npxArgs = new JsonArray();
-        npxArgs.add("--acp");
-        npx.add("args", npxArgs);
-        JsonObject distribution = new JsonObject();
-        distribution.add("npx", npx);
-        entry.add("distribution", distribution);
-        entry.addProperty("bundled", false);
+        entry.add("distribution", new JsonObject());
+        entry.addProperty("bundled", true);
         return entry;
     }
 
