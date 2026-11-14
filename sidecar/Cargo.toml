@@ -1,6 +1,6 @@
 [package]
 name = "fennec-sidecar"
-version = "2.5.0"
+version = "1.0.0"
 edition = "2021"
 license = "MIT"
 description = "Fennec JetBrains sidecar: ACP launcher/supervisor and the context JSON-RPC surface."

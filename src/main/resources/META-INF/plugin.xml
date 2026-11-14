@@ -1,17 +1,20 @@
 <idea-plugin>
   <id>com.fennec.ide</id>
   <name>Fennec</name>
-  <version>2.0.0</version>
+  <version>1.0.0</version>
   <vendor>Fennec</vendor>
 
   <description><![CDATA[
     <p>Adds <b>Fennec</b> to JetBrains Air as an installed agent card, backed by a model running
     on this machine.</p>
-    <p>The plugin installs a managed ACP launcher, publishes Fennec through Air's agent registry, and
-    registers its local launch command in Air's installed overlay. The card can be enabled, disabled
-    and removed from Air's Agents page like any other agent. The engine starts on the first prompt,
-    not when Air opens, and stops after it has been idle, so an open IDE costs no model memory. An
-    engine that was already running is attached to and left alone.</p>
+    <p>The plugin bundles a native Rust sidecar that launches the ACP agent, publishes Fennec through
+    Air's agent registry, and registers its local launch command in Air's installed overlay. The card
+    can be enabled, disabled and removed from Air's Agents page like any other agent. The engine starts
+    on the first prompt, not when Air opens, and stops after it has been idle, so an open IDE costs no
+    model memory. An engine that was already running is attached to and left alone.</p>
+    <p>A <b>Fennec</b> tool window indexes the open file into structural chunks and runs semantic search
+    against the local embedding service; results navigate straight to the symbol. Settings live under
+    Tools &rarr; Fennec.</p>
     <p>ACP itself is implemented once, in fennec-core, so the IDE, the desktop app, the CLI and the
     browser agents share the same protocol behaviour. Optional local browser outlets (jev-ultrafast,
     OpenBot) handle URL-scoped tasks when they are running.</p>
@@ -23,5 +26,9 @@
 
   <extensions defaultExtensionNs="com.intellij">
     <postStartupActivity implementation="fennec.plugin.FennecStartupActivity"/>
+    <toolWindow id="Fennec" anchor="right" icon="/icons/fennec.svg"
+                factoryClass="fennec.plugin.ui.FennecToolWindowFactory"/>
+    <applicationConfigurable parentId="tools" id="fennec.settings" displayName="Fennec"
+                             implementation="fennec.plugin.ui.FennecConfigurable"/>
   </extensions>
 </idea-plugin>

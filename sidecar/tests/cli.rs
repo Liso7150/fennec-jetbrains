@@ -125,7 +125,7 @@ fn version_reports_the_sidecar_line() {
     let temp = Temp::new("version");
     let (code, stdout, _) = run_with_stdin(base_command(&temp.home()).arg("--version"), "");
     assert_eq!(code, 0);
-    assert_eq!(stdout.trim(), "fennec-acp 2.5.0");
+    assert_eq!(stdout.trim(), "fennec-acp 1.0.0");
 }
 
 #[test]

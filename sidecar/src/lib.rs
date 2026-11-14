@@ -5,4 +5,4 @@ pub mod rpc;
 pub mod search;
 pub mod supervisor;
 
-pub const VERSION: &str = "2.5.0";
+pub const VERSION: &str = "1.0.0";
