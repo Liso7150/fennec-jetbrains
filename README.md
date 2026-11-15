@@ -7,10 +7,11 @@ behind it, and adds a tool window for structural code search. Everything runs on
 
 | Rust unit tests | Rust integration tests | Kotlin checks | Plugin zip | Sidecar binary |
 |---|---|---|---|---|
-| 60 | 13 | 34 | 381 KiB | 598 KiB |
+| 60 | 13 | 34 | 391 KiB | 622 KiB |
 
-Sources: counted in `sidecar/src/`, `sidecar/tests/cli.rs`, `src/test/kotlin/`; sizes from
-`build/Fennec-plugin-2.5.0.zip` (389,735 B) and the built `fennec-acp.exe` (612,352 B).
+Test counts measured 2026-11-15 from `sidecar/`, `sidecar/tests/cli.rs` and `src/test/kotlin/`.
+Sizes from a local build of the working tree: `build/Fennec-plugin-1.0.0.zip` (400,208 B) and
+the packaged `fennec-acp.exe` (637,440 B). Nothing at 1.0.0 is published yet.
 
 ## Architecture
 
