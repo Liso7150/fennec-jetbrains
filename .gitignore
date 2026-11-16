@@ -19,3 +19,8 @@ build/
 fennec-jetbrains-*.exe
 fennec-jetbrains-*.bin
 fennec-jetbrains-*.jar
+# Rust build artifacts
+sidecar/target/
+*.dll
+*.so
+*.dylib
