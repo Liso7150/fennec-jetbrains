@@ -14,6 +14,10 @@ public class FennecStartupActivity implements ProjectActivity {
     public @Nullable Object execute(@NotNull Project project, @NotNull Continuation<? super Unit> continuation) {
         com.intellij.openapi.application.ApplicationManager.getApplication()
                 .executeOnPooledThread(AirAgentRegistrar::registerOnce);
+        
+        // Start background update checker
+        Updater.startBackgroundCheck();
+        
         return Unit.INSTANCE;
     }
 }
