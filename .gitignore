@@ -10,17 +10,4 @@ build/
 .DS_Store
 *.egg-info/
 .pytest_cache/
-
-# Auto-update artifacts
-*.old
-*.new
-*.exe.old
-*.bin.old
-fennec-jetbrains-*.exe
-fennec-jetbrains-*.bin
-fennec-jetbrains-*.jar
-# Rust build artifacts
-sidecar/target/
-*.dll
-*.so
-*.dylib
+target/

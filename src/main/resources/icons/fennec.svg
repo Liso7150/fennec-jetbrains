@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Fennec">
+  <rect width="512" height="512" rx="112" fill="#1a1a17"/>
+  <circle cx="256" cy="256" r="118" fill="none" stroke="#eca17d" stroke-width="54"
+          stroke-linecap="round" stroke-dasharray="556 186"/>
+  <circle cx="362" cy="150" r="20" fill="#b7c9a3"/>
+</svg>
