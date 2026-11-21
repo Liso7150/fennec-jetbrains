@@ -1,7 +1,7 @@
 """Tests for the Air ACP launcher: it finds fennec-core and gets out of the way.
 
 The launcher used to carry its own ACP implementation and engine supervisor;
-both live in fennec_core.acp now, so these tests cover discovery, forwarding
+both live in the core's acp.py now, so these tests cover discovery, forwarding
 and the errors a user actually sees when the suite is missing. Stdlib only,
 no engine, no network, no IDE.
 """
@@ -18,7 +18,7 @@ from unittest import mock
 
 AIR = Path(__file__).resolve().parent.parent
 LAUNCHER = AIR / "fennec-acp.py"
-CORE_ACP = AIR.parent.parent / "fennec-core" / "fennec_core" / "acp.py"
+CORE_ACP = AIR.parent.parent / "fennec-core" / "acp.py"
 
 
 def load_launcher():
@@ -30,7 +30,7 @@ def load_launcher():
 
 launcher = load_launcher()
 
-FAKE_CORE = '''"""Fake fennec-core used by the launcher tests."""
+FAKE_MODULE = '''"""Fake fennec-core module used by the launcher tests."""
 __version__ = "0.0.0-fake"
 '''
 
@@ -38,6 +38,8 @@ FAKE_ACP = '''"""Fake ACP agent entry point; records how the launcher called it.
 import json
 import os
 import sys
+
+__version__ = "0.0.0-fake"
 
 
 def main(argv=None):
@@ -50,11 +52,14 @@ def main(argv=None):
 
 
 def make_core(base: Path) -> Path:
-    """A minimal checkout that looks like fennec-core to the launcher."""
-    package = base / "fennec_core"
-    package.mkdir(parents=True, exist_ok=True)
-    (package / "__init__.py").write_text(FAKE_CORE, encoding="utf-8")
-    (package / "acp.py").write_text(FAKE_ACP, encoding="utf-8")
+    """A minimal checkout that looks like fennec-core to the launcher.
+
+    The modules sit at the checkout root, which is what the launcher recognises.
+    """
+    base.mkdir(parents=True, exist_ok=True)
+    for name in launcher.CORE_MODULES:
+        text = FAKE_ACP if name == launcher.AGENT else FAKE_MODULE
+        (base / f"{name}.py").write_text(text, encoding="utf-8")
     return base
 
 
@@ -62,17 +67,17 @@ class ImportIsolation:
     """Keep the fake core and a real one from leaking across tests."""
 
     def __enter__(self):
-        self.cached = {name: module for name, module in sys.modules.items()
-                       if name == "fennec_core" or name.startswith("fennec_core.")}
+        names = set(launcher.CORE_MODULES)
+        self.cached = {name: module for name, module in sys.modules.items() if name in names}
         for name in self.cached:
             del sys.modules[name]
         self.path = list(sys.path)
         return self
 
     def __exit__(self, *exc):
+        names = set(launcher.CORE_MODULES)
         sys.path[:] = self.path
-        for name in [key for key in sys.modules
-                     if key == "fennec_core" or key.startswith("fennec_core.")]:
+        for name in [key for key in sys.modules if key in names]:
             del sys.modules[name]
         sys.modules.update(self.cached)
         return False
@@ -151,10 +156,12 @@ class DiscoveryTests(LauncherCase):
         self.assertEqual(launcher.find_core(self.environ(), self.here, self.home), sibling)
 
     def test_a_core_without_the_acp_agent_is_not_a_core(self):
-        """A pre-ACP fennec-core has the package and not the module; choosing it is a traceback."""
+        """A pre-ACP fennec-core has the modules and not the agent; choosing it is a traceback."""
         old = self.root / "old"
-        (old / "fennec_core" / "__init__.py").parent.mkdir(parents=True)
-        (old / "fennec_core" / "__init__.py").write_text(FAKE_CORE, encoding="utf-8")
+        old.mkdir()
+        for name in launcher.CORE_MODULES:
+            if name != launcher.AGENT:
+                (old / f"{name}.py").write_text(FAKE_MODULE, encoding="utf-8")
         suite = make_core(self.root / "configured" / "fennec-core")
         self.write_config({"suite_root": str(suite.parent)})
         self.assertEqual(launcher.find_core(self.environ(FENNEC_CORE=old), self.here, self.home), suite)
@@ -165,6 +172,22 @@ class DiscoveryTests(LauncherCase):
                                       self.here, self.home)
         self.assertIn(str(old), str(raised.exception))
         self.assertIn("FENNEC_CORE", str(raised.exception))
+
+    def test_a_stray_namesake_file_is_not_a_core(self):
+        """The modules are top-level now, so three of them can belong to any project."""
+        stray = self.root / "someone-elses-project"
+        stray.mkdir()
+        for name in launcher.CORE_MODULES:
+            if name != "setup_wizard":
+                (stray / f"{name}.py").write_text(FAKE_MODULE, encoding="utf-8")
+        self.assertFalse(launcher.is_core(stray))
+        self.assertTrue(launcher.is_core(make_core(self.root / "real" / "fennec-core")))
+        with mock.patch.object(launcher.importlib.util, "find_spec", return_value=None):
+            with self.assertRaises(launcher.CoreNotFound) as raised:
+                launcher.import_agent(self.environ(FENNEC_CORE=stray,
+                                                  FENNEC_SUITE=self.root / "gone"),
+                                      self.here, self.home)
+        self.assertIn("carries acp.py", str(raised.exception))
 
     def test_default_config_location_and_empty_config(self):
         path = self.write_config({})
@@ -205,20 +228,20 @@ class ImportTests(LauncherCase):
         self.assertIn("FENNEC_CORE", message)
         self.assertIn("installer", message)
 
-    def test_an_installed_package_needs_no_checkout(self):
+    def test_an_installed_core_needs_no_checkout(self):
         fake = mock.Mock()
         with mock.patch.object(launcher.importlib.util, "find_spec", return_value=object()), \
              mock.patch.object(launcher.importlib, "import_module", return_value=fake) as imported:
             self.assertIs(launcher.import_agent(self.environ(), self.here, self.home), fake)
-        imported.assert_called_once_with("fennec_core.acp")
+        imported.assert_called_once_with(launcher.AGENT)
 
     def test_a_found_checkout_is_put_on_sys_path_before_importing(self):
         root = make_core(self.here.parent.parent / "fennec-core")
         with ImportIsolation():
             agent = launcher.import_agent(self.environ(), self.here, self.home)
             self.assertEqual(sys.path[0], str(root))
-            self.assertEqual(agent.__name__, "fennec_core.acp")
-            self.assertEqual(sys.modules["fennec_core"].__version__, "0.0.0-fake")
+            self.assertEqual(agent.__name__, launcher.AGENT)
+            self.assertEqual(agent.__version__, "0.0.0-fake")
 
     def test_repeated_launches_do_not_stack_the_path(self):
         root = make_core(self.here.parent.parent / "fennec-core")
@@ -280,12 +303,12 @@ class ForwardingTests(LauncherCase):
 
     def test_an_installed_core_without_the_agent_is_explained_not_raised(self):
         with mock.patch.object(launcher, "import_agent",
-                               side_effect=ModuleNotFoundError("No module named 'fennec_core.acp'")), \
+                               side_effect=ModuleNotFoundError("No module named 'acp'")), \
              redirect_stderr(io.StringIO()) as stderr, redirect_stdout(io.StringIO()):
             code = launcher.main([], self.launch_env, self.here)
         self.assertEqual(code, 2)
         self.assertIn("[fennec-acp]", stderr.getvalue())
-        self.assertIn("fennec_core/acp.py", stderr.getvalue())
+        self.assertIn("acp.py", stderr.getvalue())
 
     def test_a_missing_core_exits_two_with_a_readable_reason(self):
         here = self.root / "stray" / "fennec-jetbrains" / "air"
@@ -305,7 +328,7 @@ class NoDuplicatedProtocolTests(unittest.TestCase):
         source = LAUNCHER.read_text(encoding="utf-8")
         for marker in ("jsonrpc", "session/update", "chat/completions", "subprocess.Popen",
                        "HTTPServer", "BaseHTTPRequestHandler"):
-            self.assertNotIn(marker, source, f"{marker} belongs in fennec_core.acp")
+            self.assertNotIn(marker, source, f"{marker} belongs in the core's acp.py")
 
     @unittest.skipUnless(CORE_ACP.is_file(), "fennec-core is not next to this checkout")
     def test_the_real_agent_owns_the_protocol(self):

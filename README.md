@@ -9,7 +9,7 @@ behind it. Everything runs on this machine. Plugin version: **1.0.0**.
 
 - Installs the managed ACP launcher at `~/.fennec/air/fennec-acp.py`. The launcher
   owns no protocol code: it finds fennec-core on this machine and hands the process
-  to `fennec_core.acp`, which speaks ACP v1 over stdio, starts the local engine on
+  to `acp.py` at that checkout's root, which speaks ACP v1 over stdio, starts the local engine on
   the first prompt and streams `session/update` chunks back to Air.
 - Merges a `fennec` entry into a Fennec-owned copy of Air's agent registry at
   `~/.fennec/air/registry.json` and points Air at it with the
@@ -34,15 +34,18 @@ option. The plugin deliberately provides no tab, settings page or editor actions
 ## Browser / web-agent outlets (optional)
 
 The outlets are a fennec-core feature, not plugin code: the ACP agent can hand a
-solvable, URL-scoped browser task to a local outlet and read the result back. They
+solvable, URL-scoped browser task to an outlet and read the result back. They
 are optional, gated by the same per-turn approvals as every other tool, and never
-required for the core coding flow. Both upstreams are used as they are - this
-workspace never modifies them.
+required for the core coding flow. The one upstream workspace among them, OpenBot,
+is used exactly as it is - this workspace never modifies it.
 
-- **jev-ultrafast** (https://github.com/browser-use/jev-ultrafast): fastest
-  single-model browser loop from Browser Use.
+- **Fennec's own loop** (the only browser lane): the suite's browser loop, decided by Liquid
+  **d1.2** (or the free local `d1-2B`);
+  needs a Python with the browser transport and a decision endpoint, `LIQUID_API_KEY` or
+  `LIQUID_ENDPOINT`.
+  `--features browser-outlets` installs that transport into Fennec's own browser venv.
 - **OpenBot** (https://github.com/CopilotKit/OpenBot): shared local workspace
-  of agents with per-agent browsers and tools.
+  of agents with per-agent browsers and tools; answers `coworker_task`, not `web_task`.
 
 `python air/fennec-acp.py --check` prints what the agent advertises, including
 whether each outlet is present.
@@ -65,7 +68,8 @@ installer share: engine root, Python, model, engine URL, policy, backend and
 `ctx`. No fields are duplicated into the plugin.
 
 To run fennec-core from a non-default checkout, set `FENNEC_CORE` to the directory
-that contains `fennec_core/`. The launcher otherwise uses `suite_root` (or
+that carries `acp.py`, `config.py`, `outlets.py` and `setup_wizard.py` at its root.
+The launcher otherwise uses `suite_root` (or
 `FENNEC_SUITE`) and, when started from a checkout, the `fennec-core` folder next to
 this repository.
 
@@ -88,5 +92,6 @@ Engine base idea: [JustVugg/colibri](https://github.com/JustVugg/colibri) —
 device-tiered MoE inference. Fine-tuning:
 [AirLLM](https://github.com/lyogavin/airllm).
 
-Web-agent outlets (optional): [jev-ultrafast](https://github.com/browser-use/jev-ultrafast)
-and [OpenBot](https://github.com/CopilotKit/OpenBot).
+Outlets (optional): `web_task` is Fennec's own loop, decided by a Liquid **d1.2**
+(`https://api.liquid.ai/decisions/v1/systemone`) or a free local `d1-2B`; `coworker_task` is
+[OpenBot](https://github.com/CopilotKit/OpenBot).

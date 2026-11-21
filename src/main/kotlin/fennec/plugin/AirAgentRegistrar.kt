@@ -120,9 +120,9 @@ internal object AirAgentRegistrar {
         addProperty("name", AGENT_NAME)
         addProperty("version", version)
         addProperty("description",
-            "Coding agent backed by the Fennec model on this machine, with optional local " +
-            "browser outlets (jev-ultrafast / OpenBot) for URL-scoped tasks. The engine " +
-            "starts with the first prompt and stops after it has been idle.")
+            "Coding agent backed by the Fennec model on this machine, with optional local browser " +
+            "outlets (Fennec's own loop on Liquid d1.2, and OpenBot) for URL-scoped " +
+            "tasks. The engine starts with the first prompt and stops after it has been idle.")
         addProperty("website", REPOSITORY)
         addProperty("repository", REPOSITORY)
         add("authors", JsonArray().apply { add("Fennec") })

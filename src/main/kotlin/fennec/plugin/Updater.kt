@@ -71,7 +71,7 @@ object Updater {
     }
 
     private fun checkExperimental(): Release {
-        val url = "https://api.github.com/repos/$GITHUB_REPO/commits/master"
+        val url = "https://api.github.com/repos/$GITHUB_REPO/commits/main"
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             setRequestProperty("User-Agent", "fennec-updater")
             connectTimeout = 10_000

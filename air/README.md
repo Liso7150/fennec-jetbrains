@@ -7,8 +7,8 @@ implementation instead of four dialects.
 
 The launcher does three things:
 
-1. Finds the `fennec_core` package on this machine (table below).
-2. Puts that checkout on `sys.path` and imports `fennec_core.acp`.
+1. Finds the `fennec-core` checkout on this machine (table below).
+2. Puts that checkout on `sys.path` and imports `acp`.
 3. Calls its `main()`, which speaks ACP v1 over stdio: `initialize`,
    `session/new`, `session/load`, `session/resume`, `session/list`,
    `session/close`, `session/set_mode`, `session/prompt` with streamed
@@ -18,7 +18,7 @@ The launcher does three things:
 Behaviour that Air sees - lazy engine start on the first prompt, streamed
 `agent_message_chunk` / `agent_thought_chunk` updates, an owned engine stopped
 after the idle timeout, an attached engine left running - is implemented and
-tested in [`fennec-core/fennec_core/acp.py`](../../fennec-core/fennec_core/acp.py).
+tested in [`fennec-core/acp.py`](../../fennec-core/acp.py).
 Stdlib only here; nothing is downloaded and no request leaves the loopback
 interface.
 
@@ -26,13 +26,13 @@ interface.
 
 | Order | Source | Value |
 |---|---|---|
-| 1 | `FENNEC_CORE` | a directory holding `fennec_core/acp.py` |
+| 1 | `FENNEC_CORE` | a directory holding `acp.py` |
 | 2 | `FENNEC_SUITE`, then `suite_root` in `~/.fennec/config.json` | `<suite>/fennec-core` |
 | 3 | next to a checkout | `<launcher>/../../fennec-core` |
-| 4 | installed package | `import fennec_core` from the interpreter's environment |
+| 4 | installed package | the `fennec-core` checkout pip-installed into the interpreter's environment |
 
-A candidate only counts when it carries `fennec_core/acp.py`: a fennec-core from
-before the ACP agent has the package and not the module, and importing it is a
+A candidate only counts when it carries `acp.py`: a fennec-core from
+before the ACP agent has no `acp.py`, and importing it is a
 traceback Air cannot show. The first candidate that qualifies wins, so an old
 sibling checkout never shadows a usable one.
 
@@ -63,7 +63,7 @@ python fennec-acp.py --check
               "session/list", "session/load", "session/new", "session/prompt",
               "session/resume", "session/set_mode"],
   "modes": ["agent", "ask"], "engineRunning": false,
-  "outlets": {"jev": {"present": false}, "openbot": {"present": false}}
+  "outlets": {"fennec": {"present": false}, "openbot": {"present": false}}
 }
 ```
 
@@ -85,14 +85,20 @@ records back out and leaves other agents in those files alone.
 
 ## Browser / web-agent outlets (optional)
 
-Fennec can hand a solvable, URL-scoped browser task to a local web agent and read
-the result back. It is a fennec-core outlet, gated by the same approval as every
-other tool, and never required for the coding flow. The targets are local, and
-their credentials and traces stay with them.
+Fennec can hand a solvable, URL-scoped browser task to a web agent and read the
+result back. It is a fennec-core outlet, gated by the same approval as every
+other tool, and never required for the coding flow. The browser itself is local;
+the only thing that leaves the machine is the page text of the step being decided,
+which goes to Liquid's hosted decision API named in the first bullet below.
 
-- **jev-ultrafast** (https://github.com/browser-use/jev-ultrafast): a fast,
-  single-model browser loop that picks an operation and a compatible element
-  index from an indexed page snapshot. Give the **end state**, not the hops.
+- **Fennec's own loop** (the only browser lane): the suite's browser loop, with Liquid **d1.2**
+  (https://api.liquid.ai/decisions/v1/systemone) as the decision model that turns an
+  indexed page snapshot into one operation + element index. Give the **end state**,
+  not the hops. It needs a Python with the browser transport installed and a
+  `LIQUID_API_KEY` (hosted `d1.2`) or `LIQUID_ENDPOINT` (a local free `d1-2B`) in the
+  environment; `fennec outlets` says which of the two is
+  missing (`--features browser-outlets` installs the transport into Fennec's own
+  browser venv).
 - **OpenBot** (https://github.com/CopilotKit/OpenBot): a shared local workspace of
   agents, each with its own browser, files, role, conversation and queue.
 
