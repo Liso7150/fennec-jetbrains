@@ -1,6 +1,6 @@
 //! The ACP supervisor: what the Python launcher used to do in-process, now as
-//! a parent process. It finds fennec-core, hands the process over to
-//! `fennec_core.acp` (which owns ACP v1), pumps stdio both ways, and propagates
+//! a parent process. It finds fennec-core, hands the process over to its
+//! `acp.py` (which owns ACP v1), pumps stdio both ways, and propagates
 //! the agent's exit code. A crashing agent takes this process with it - never
 //! the IDE, which only ever sees a subprocess exit.
 
@@ -12,18 +12,18 @@ use std::thread;
 use crate::discovery::{self, Environ};
 use fennec_client::suite;
 
-/// Mirrors the shim: sys.path.insert(0, root), then run fennec_core.acp as
+/// Mirrors the shim: sys.path.insert(0, root), then run the checkout's acp.py as
 /// __main__ so its `if __name__ == "__main__"` guard fires and main() sees the
 /// forwarded argv. The root travels as an argv element, never inside -c text.
-const RUNPY_WITH_ROOT: &str =
-    "import sys, runpy; sys.path.insert(0, sys.argv.pop(1)); runpy.run_module('fennec_core.acp', run_name='__main__')";
-const RUNPY_INSTALLED: &str =
-    "import runpy; runpy.run_module('fennec_core.acp', run_name='__main__')";
-/// 0: the agent module is importable; 1: package without the agent; 2: neither.
-/// The parent is probed first: find_spec of a submodule raises when the parent
-/// package is absent.
-const PROBE_INSTALLED: &str =
-    "import importlib.util as u; pkg = u.find_spec('fennec_core'); raise SystemExit(2 if pkg is None else (0 if u.find_spec('fennec_core.acp') else 1))";
+/// fennec-core keeps its modules at the checkout root, so this is a file path,
+/// not a package path.
+const RUNPY_WITH_ROOT: &str = "import os, runpy, sys; root = sys.argv.pop(1); sys.path.insert(0, root); runpy.run_path(os.path.join(root, 'acp.py'), run_name='__main__')";
+/// The wheel installs the same modules top-level, so an installed core runs by module name.
+const RUNPY_INSTALLED: &str = "import runpy; runpy.run_module('acp', run_name='__main__')";
+/// 0: this interpreter can import the agent; anything else: it has no fennec-core.
+/// The import is done, not just located, because a module that raises on import
+/// is not a core the supervisor can run.
+const PROBE_INSTALLED: &str = "import acp";
 
 fn report(message: &str) -> i32 {
     eprintln!("[fennec-acp] {message}");
@@ -57,14 +57,6 @@ pub fn run(args: &[String], launcher_dir: &Path, environ: &Environ) -> i32 {
             match probe.map(|s| s.code()) {
                 Ok(Some(0)) => {
                     command.arg("-c").arg(RUNPY_INSTALLED);
-                }
-                Ok(Some(1)) => {
-                    return report(&format!(
-                        "the fennec_core package on this interpreter cannot run as an ACP agent: \
-                         no module named fennec_core.acp. Update fennec-core to {} or point \
-                         FENNEC_CORE at a checkout that carries fennec_core/acp.py.",
-                        crate::VERSION
-                    ));
                 }
                 _ => return report(&discovery::not_found_message(&paths)),
             }

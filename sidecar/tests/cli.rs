@@ -75,10 +75,9 @@ if __name__ == "__main__":
 "#;
 
 fn make_core(base: &Path) -> PathBuf {
-    let package = base.join("fennec_core");
-    fs::create_dir_all(&package).unwrap();
-    fs::write(package.join("__init__.py"), "__version__ = \"0.0.0-fake\"\n").unwrap();
-    fs::write(package.join("acp.py"), FAKE_ACP).unwrap();
+    fs::create_dir_all(base).unwrap();
+    fs::write(base.join("version.py"), "__version__ = \"0.0.0-fake\"\n").unwrap();
+    fs::write(base.join("acp.py"), FAKE_ACP).unwrap();
     base.to_path_buf()
 }
 
@@ -144,10 +143,16 @@ fn an_unknown_flag_is_rejected_before_any_launch() {
 fn a_missing_core_exits_two_with_a_readable_reason() {
     let temp = Temp::new("missing");
     let home = temp.home();
+    // The interpreter is only probed once no checkout turned up, so this shadows
+    // acp with a module that raises: "no core anywhere", not just "no checkout".
+    let shadow = temp.root.join("shadow");
+    fs::create_dir_all(&shadow).unwrap();
+    fs::write(shadow.join("acp.py"), "raise ImportError(\"no core here\")\n").unwrap();
     let mut command = base_command(&home);
     command
         .env("FENNEC_CORE", temp.root.join("gone"))
-        .env("FENNEC_SUITE", temp.root.join("gone-suite"));
+        .env("FENNEC_SUITE", temp.root.join("gone-suite"))
+        .env("PYTHONPATH", &shadow);
     let (code, _, stderr) = run_with_stdin(&mut command, "");
     assert_eq!(code, 2);
     assert!(stderr.contains("[fennec-acp]"), "{stderr}");
@@ -156,6 +161,22 @@ fn a_missing_core_exits_two_with_a_readable_reason() {
         stderr.contains(&temp.root.join("gone-suite").join("fennec-core").display().to_string()),
         "{stderr}"
     );
+}
+
+#[test]
+fn an_installed_core_runs_when_no_checkout_exists() {
+    let temp = Temp::new("installed");
+    let home = temp.home();
+    let site = temp.root.join("site");
+    fs::create_dir_all(&site).unwrap();
+    fs::write(site.join("acp.py"), FAKE_ACP).unwrap();
+    let mut command = base_command(&home);
+    command
+        .env("FENNEC_CORE", temp.root.join("gone"))
+        .env("FENNEC_SUITE", temp.root.join("gone-suite"))
+        .env("PYTHONPATH", &site);
+    let (code, _, stderr) = run_with_stdin(&mut command, "");
+    assert_eq!(code, 7, "the interpreter's acp module should run as the agent: {stderr}");
 }
 
 #[test]

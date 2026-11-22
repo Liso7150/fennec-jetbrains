@@ -2,8 +2,8 @@
 //! plus the interpreter resolution the plugin's SharedConfig contract defines.
 //! The suite, config and path rules themselves belong to `fennec_client::suite`,
 //! which the desktop consumes too; only the ACP core lookup and the plugin's own
-//! contracts are here. The ACP protocol stays in `fennec_core.acp`; nothing here
-//! speaks it.
+//! contracts are here. The ACP protocol stays in fennec-core's `acp.py`; nothing
+//! here speaks it.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -68,7 +68,7 @@ fn py_parent(path: &Path) -> PathBuf {
     }
 }
 
-/// Directories that could hold the fennec_core package, most specific first.
+/// Directories that could hold the fennec-core checkout, most specific first.
 /// `launcher_dir` is the sidecar executable's directory: `<suite>/fennec-jetbrains/air`
 /// in a checkout, so the suite root - and fennec-core next to it - is two levels up.
 pub fn core_search_paths(
@@ -85,13 +85,11 @@ pub fn core_search_paths(
     Ok(paths)
 }
 
-/// acp.py, not just __init__.py: a checkout that predates the ACP agent is the
-/// common case of "found", and importing it is a traceback, not a miss.
+/// acp.py at the checkout root, not any other module: a checkout that predates
+/// the ACP agent is the common case of "found", and importing it is a traceback,
+/// not a miss.
 pub fn find_core(paths: &[PathBuf]) -> Option<PathBuf> {
-    paths
-        .iter()
-        .find(|candidate| candidate.join("fennec_core").join("acp.py").is_file())
-        .cloned()
+    paths.iter().find(|candidate| candidate.join("acp.py").is_file()).cloned()
 }
 
 pub fn not_found_message(paths: &[PathBuf]) -> String {
@@ -102,7 +100,7 @@ pub fn not_found_message(paths: &[PathBuf]) -> String {
         .join(", ");
     format!(
         "fennec-core was not found (looked in: {searched}). Run the Fennec environment \
-         installer or set FENNEC_CORE to the checkout that contains fennec_core/."
+         installer or set FENNEC_CORE to the checkout that contains acp.py."
     )
 }
 
@@ -281,10 +279,9 @@ mod tests {
     }
 
     fn make_core(base: &Path) -> PathBuf {
-        let package = base.join("fennec_core");
-        fs::create_dir_all(&package).unwrap();
-        fs::write(package.join("__init__.py"), "__version__ = \"0.0.0-fake\"\n").unwrap();
-        fs::write(package.join("acp.py"), "def main(argv=None):\n    return 7\n").unwrap();
+        fs::create_dir_all(base).unwrap();
+        fs::write(base.join("version.py"), "__version__ = \"0.0.0-fake\"\n").unwrap();
+        fs::write(base.join("acp.py"), "def main(argv=None):\n    return 7\n").unwrap();
         base.to_path_buf()
     }
 
@@ -315,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn fennec_core_wins_over_the_suite_root() {
+    fn an_explicit_core_wins_over_the_suite_root() {
         let t = TempHome::new("wins");
         let explicit = make_core(&t.root.join("explicit"));
         let suite = make_core(&t.root.join("configured").join("fennec-core"));
@@ -332,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pointless_fennec_core_falls_through_to_the_suite() {
+    fn a_directory_that_is_not_a_core_falls_through_to_the_suite() {
         let t = TempHome::new("fallthrough");
         let empty = t.root.join("empty");
         fs::create_dir_all(&empty).unwrap();
@@ -391,8 +388,8 @@ mod tests {
     fn a_core_without_the_acp_agent_is_not_a_core() {
         let t = TempHome::new("pre-acp");
         let old = t.root.join("old");
-        fs::create_dir_all(old.join("fennec_core")).unwrap();
-        fs::write(old.join("fennec_core").join("__init__.py"), "").unwrap();
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("version.py"), "__version__ = \"0.0.0-pre-acp\"\n").unwrap();
         let suite = make_core(&t.root.join("configured").join("fennec-core"));
         t.write_config(&format!("{{\"suite_root\": {:?}}}", suite.parent().unwrap().display().to_string()));
         let found = find_core(

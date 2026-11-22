@@ -1,7 +1,7 @@
 //! fennec-acp: the Fennec JetBrains sidecar.
 //!
-//! Default mode supervises the ACP agent implemented by fennec_core.acp (the
-//! protocol stays in Python). `--rpc` serves the plugin's context JSON-RPC
+//! Default mode supervises the ACP agent implemented by fennec-core's acp.py
+//! (the protocol stays in Python). `--rpc` serves the plugin's context JSON-RPC
 //! surface instead. `--check` and `--version` behave like the Python launcher
 //! they replace.
 
@@ -22,7 +22,7 @@ options:
   --version  print the sidecar version and exit
   -h, --help show this message and exit
 
-The ACP protocol itself lives in fennec_core.acp.";
+The ACP protocol itself lives in fennec-core's acp.py.";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

@@ -19,7 +19,7 @@ the packaged `fennec-acp.exe` (638,976 B). Nothing at 1.0.0 is published yet.
 JetBrains Air ── ACP v1 over stdio ──► fennec-acp (Rust supervisor)
                                           │ spawns, pumps stdio, propagates exit codes
                                           ▼
-                                     fennec_core.acp (Python)
+                                     acp.py (Python)
                                           │ engine starts on first prompt
                                           ▼
                                      local engine (default HTTP :8184)
@@ -34,7 +34,7 @@ Fennec tool window ── NDJSON JSON-RPC (--rpc) ──► fennec-acp
 |---|---|
 | Kotlin | Air registration, Kotlin UI DSL settings panel, tool window; PSI in `readAction`, Swing on the EDT, sidecar streaming bridged with coroutine `Flow` |
 | Rust (`sidecar/`, self-contained crate) | the single `fennec-acp` binary: ACP launcher/supervisor **and** the `--rpc` context service (`context/chunk`, `context/search`) |
-| fennec-core | ACP v1 itself (`fennec_core/acp.py`); the sidecar owns no protocol code |
+| fennec-core | ACP v1 itself (`acp.py` at the repo root); the sidecar owns no protocol code |
 
 > [!NOTE]
 > The sidecar is a **subprocess**, not a JNI/Panama library, and the protocol is JSON-RPC
@@ -77,7 +77,7 @@ own loop, which asks a Liquid **d1** model one question per step (the hosted `d1
 `coworker_task` is [OpenBot](https://github.com/CopilotKit/OpenBot), used exactly as upstream
 and never modified.
 
-`fennec-acp --check` forwards the flag to `fennec_core.acp`, which prints what the agent
+`fennec-acp --check` forwards the flag to fennec-core's `acp.py`, which prints what the agent
 advertises — including whether each outlet is present.
 
 ## Build
@@ -127,7 +127,7 @@ model, engine URL, policy, backend and `ctx`. No fields are duplicated into the 
 
 | Override | Effect |
 |---|---|
-| `FENNEC_CORE` | run fennec-core from a non-default checkout (the directory containing `fennec_core/`) |
+| `FENNEC_CORE` | run fennec-core from a non-default checkout (the directory containing `acp.py`) |
 | `FENNEC_SUITE` / `suite_root` | where to look for the `fennec-core` folder; a checkout next to this repo is also probed |
 | `FENNEC_ACP_IDLE_TIMEOUT` | idle-engine stop timeout in seconds, read by fennec-core (default 300) |
 

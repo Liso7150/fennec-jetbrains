@@ -1,5 +1,5 @@
-//! In-memory cosine index. The scoring mirrors fennec_core.tools.semantic_search
-//! so a query ranks the same way it does through the Python agent.
+//! In-memory cosine index. The scoring mirrors tools.semantic_search in
+//! fennec-core so a query ranks the same way it does through the Python agent.
 
 use serde::Serialize;
 
