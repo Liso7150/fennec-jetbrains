@@ -1,4 +1,4 @@
-![Fennec for JetBrains 1.0.0 — a local coding agent inside your IDE: Kotlin plugin, bundled Rust sidecar, no cloud. Registers Fennec as an agent card in JetBrains Air. IntelliJ Platform 263.x, Kotlin 2.4.21, Rust sidecar, 73 Rust tests, 41 Kotlin checks, MIT license.](docs/hero.png)
+![Fennec for JetBrains 1.0.0 — a local coding agent inside your IDE: Kotlin plugin, bundled Rust sidecar, no cloud. Registers Fennec as an agent card in JetBrains Air. IntelliJ Platform 263.x, Kotlin 2.4.21, 80 Rust tests, 46 Kotlin checks, MIT license.](docs/hero.png)
 
 Registers **Fennec** as an agent card in JetBrains Air, installs the native ACP launcher
 behind it, and adds a tool window for structural code search. Everything runs on this machine.
@@ -7,11 +7,11 @@ behind it, and adds a tool window for structural code search. Everything runs on
 
 | Rust unit tests | Rust integration tests | Kotlin checks | Plugin zip | Sidecar binary |
 |---|---|---|---|---|
-| 60 | 13 | 41 | 404 KiB | 624 KiB |
+| 66 | 14 | 46 | 416 KiB | 652 KiB |
 
-Test counts measured 2026-11-21 from `sidecar/`, `sidecar/tests/cli.rs` and `src/test/kotlin/`.
-Sizes from a local build of the working tree: `build/Fennec-plugin-1.0.0.zip` (413,995 B) and
-the packaged `fennec-acp.exe` (638,976 B). Nothing at 1.0.0 is published yet.
+Test counts measured on 2026-11-24: 66 unit and 14 integration in `sidecar/`, which together are the 80 the lane measures, and 46 headless checks in `src/test/kotlin/`. Sizes from a local build of the
+working tree: `build/Fennec-plugin-1.0.0.zip` (426,074 B) and the packaged
+`fennec-acp.exe` (668,160 B). Nothing at 1.0.0 is published yet.
 
 ## Architecture
 
@@ -26,8 +26,8 @@ JetBrains Air ── ACP v1 over stdio ──► fennec-acp (Rust supervisor)
 
 Fennec tool window ── NDJSON JSON-RPC (--rpc) ──► fennec-acp
                                                    ├─ context/chunk   (pure Rust)
-                                                   └─ context/search  (cosine index)
-                                                         └─ embeddings :8182
+                                                   └─ context/search  (cosine over embeddings :8182
+                                                         when it answers, BM25 over chunk text when not)
 ```
 
 | Layer | Owns |
@@ -47,25 +47,31 @@ Fennec tool window ── NDJSON JSON-RPC (--rpc) ──► fennec-acp
 |---|---|
 | Sidecar install | `~/.fennec/air/fennec-acp[.exe]`, registered as the launch command in `~/.jetbrains/acp-registry-installed-overlay.json` (the binary is the command; no arguments) |
 | Registry merge | a `fennec` entry in a Fennec-owned copy of Air's registry at `~/.fennec/air/registry.json`; Air is pointed at it via `air.acp.registry.path` in the user `.vmoptions`. Air's cached registry is the base, so built-in agents stay visible |
-| Installed card | marks Fennec in Air's shared `installed.json` — a real card with install/enable/disable controls; nothing is downloaded |
+| Installed card | marks Fennec in Air's shared `installed.json` — a real card with install/enable/disable controls; the catalog carries a supported platform binary schema, while the installed overlay replaces it with the bundled local sidecar |
 | Legacy cleanup | removes the old `Colibri` entry from `~/.jetbrains/acp.json` only when it points at a managed launcher (sidecar or retired Python shim); other custom agents are never touched |
 | Engine lifecycle | starts on the first prompt, stops after idle; an already-running engine is attached to and left alone |
 | Update check | hourly against this repo's GitHub releases, once per version per IDE run. It only announces: a plugin is replaced by the IDE's own installer, never by itself |
 
-Registry changes apply after the next IDE start (the override is a JVM option). On an OS
-with no bundled sidecar binary, registration is skipped with a warning.
+The catalog entry includes Air's supported `distribution.binary.<platform>` shape so Air keeps
+Fennec visible. The installed overlay then supplies `distribution.local` with the extracted
+sidecar path, so launches stay local and do not use the catalog fallback archive. Registry changes
+apply after the next IDE start (the override is a JVM option). On an OS with no bundled sidecar
+binary, registration is skipped with a warning.
 
 ## Tool window and settings
 
 The **Fennec** tool window (right anchor) indexes the open file into structural chunks
-(declarations and blocks with byte ranges and symbol names), embeds them, and runs semantic
-search; clicking a result navigates to the symbol. Settings under **Tools → Fennec**: an
+(declarations and blocks with byte ranges and symbol names) and searches them; clicking a
+result navigates to the symbol. Settings under **Tools → Fennec**: an
 optional sidecar path override, the search result limit, whether the update check runs and on
 which channel, and a read-only view of the engine Python resolved from the shared config.
 
-Semantic search uses the suite's loopback embedding service at
-`http://127.0.0.1:8182/v1/embeddings` (override with `FENNEC_EMBED_URL`). If the service is
-unreachable the sidecar returns a JSON-RPC error — it never fabricates embeddings or scores.
+Scoring depends on whether an embedding endpoint answers. When one does, the chunk texts and the
+query are embedded and ranked by cosine; when it does not, the same documents are ranked by BM25
+over the stored text. Every reply carries the scorer as `mode` and the status line shows it.
+Nothing in the suite serves `/v1/embeddings` out of the box, so a fresh install searches
+lexically until `FENNEC_EMBED_URL` (default `http://127.0.0.1:8182`) points at an endpoint that
+does. A document the endpoint did not embed is never given a semantic score.
 
 ## Browser / web-agent outlets (optional)
 
@@ -92,9 +98,9 @@ Builds the Rust sidecar offline, compiles Kotlin against the IDE platform with t
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `FENNEC_IDE_PLATFORM` | a RustRover 2026.3 install | any IntelliJ-based IDE install (263.x) to compile against |
-| `KOTLINC` | the suite's Kotlin 2.4.21 compiler | path to `kotlinc` / `kotlinc.bat` |
-| `FENNEC_SIDECAR_TARGET` | `x86_64-pc-windows-gnu` | Rust target triple for the sidecar |
+| `FENNEC_IDE_PLATFORM` | a detected local IntelliJ-platform 263.x install | any IntelliJ-based IDE install (263.x) to compile against |
+| `FENNEC_KOTLINC` | `kotlinc` / `kotlinc.bat` on PATH | path to the Kotlin compiler |
+| `FENNEC_SIDECAR_TARGET` | `rustc -vV` host triple | Rust target triple for the one bundled sidecar |
 
 Install the zip via *Settings → Plugins → Install Plugin from Disk* and restart the IDE;
 Fennec then appears on Air's Agents page.
@@ -139,9 +145,9 @@ model, engine URL, policy, backend and `ctx`. No fields are duplicated into the 
 
 | Suite | Count | Covers |
 |---|---|---|
-| Rust unit (`sidecar/`) | 60 | discovery search order, chunking, cosine index, embedding client, JSON-RPC dispatch |
-| Rust integration (`sidecar/tests/cli.rs`) | 13 | the built binary over stdio: flag forwarding, crash/exit-code propagation, EOF shutdown, chunk/search against a loopback fake embedding service |
-| Kotlin headless | 41 | SharedConfig contract and Air registration: registry merge, overlay, vmoptions, idempotency, legacy cleanup; the updater's version and release-payload decisions. Injected environments and temporary homes |
+| Rust unit (`sidecar/`) | 66 | discovery search order, chunking, cosine index, embedding client, JSON-RPC dispatch |
+| Rust integration (`sidecar/tests/cli.rs`) | 14 | the built binary over stdio: flag forwarding, crash/exit-code propagation, EOF shutdown, and chunk/search against a loopback fake embedding service, so both the cosine and the BM25 scorer run |
+| Kotlin headless | 46 | SharedConfig contract and Air registration: registry merge, overlay, vmoptions, idempotency, legacy cleanup; the updater's version and release-payload decisions. Injected environments and temporary homes |
 
 No engine, no model, no real network, no IDE — and no paid API. The ACP protocol itself is
 tested in `fennec-core/tests`. The Kotlin UI compiles against the real platform but is not

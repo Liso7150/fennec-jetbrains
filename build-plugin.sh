@@ -7,27 +7,63 @@
 # sidecar/<os-dir>/ so the plugin can install it per OS at runtime.
 #
 # Overrides (mirroring FENNEC_IDE_PLATFORM):
-#   KOTLINC              path to kotlinc(.bat)
+#   FENNEC_KOTLINC      path to kotlinc(.bat) (default: kotlinc on PATH)
 #   FENNEC_IDE_PLATFORM  IntelliJ-based IDE install dir (provides lib jars + JBR)
 #   FENNEC_SIDECAR_TARGET  Rust target triple to build (default: this machine's)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLATFORM="${FENNEC_IDE_PLATFORM:-C:/Program Files/JetBrains/RustRover 2026.3}"
-KOTLINC="${KOTLINC:-D:/Fennec-Suite/engine-bench/kotlinc/kotlinc/bin/kotlinc.bat}"
-SIDECAR_TARGET="${FENNEC_SIDECAR_TARGET:-x86_64-pc-windows-gnu}"
+PLATFORM="${FENNEC_IDE_PLATFORM:-${RUSTROVER_HOME:-${IDEA_HOME:-}}}"
+if [ -z "$PLATFORM" ]; then
+  for candidate in \
+    "/c/Program Files/JetBrains/RustRover 2026.3" \
+    "$HOME/.local/share/JetBrains/RustRover2026.3" \
+    "/Applications/RustRover.app/Contents"; do
+    if [ -d "$candidate/lib" ]; then
+      PLATFORM="$candidate"
+      break
+    fi
+  done
+fi
+SIDECAR_TARGET="${FENNEC_SIDECAR_TARGET:-$(rustc -vV 2>/dev/null | sed -n 's/^host: //p')}"
 OUT="$HERE/build"
 CLASSES="$OUT/classes"
 DIST="$OUT/fennec-jetbrains"
 
+if [ -n "${FENNEC_KOTLINC:-}" ]; then
+  KOTLINC="$FENNEC_KOTLINC"
+else
+  KOTLINC="$(command -v kotlinc || command -v kotlinc.bat || true)"
+fi
+if [ -z "$KOTLINC" ] || [ ! -f "$KOTLINC" ]; then
+  echo "kotlinc not found. Add it to PATH or set FENNEC_KOTLINC to the compiler path." >&2
+  exit 1
+fi
+
+osdir_for() {
+  case "$1" in
+    x86_64-pc-windows-*)   echo "windows-x64" ;;
+    aarch64-pc-windows-*)  echo "windows-arm64" ;;
+    x86_64-apple-darwin)   echo "macos-x64" ;;
+    aarch64-apple-darwin)  echo "macos-arm64" ;;
+    x86_64-unknown-linux-*)  echo "linux-x64" ;;
+    aarch64-unknown-linux-*) echo "linux-arm64" ;;
+    *) echo "" ;;
+  esac
+}
+if [[ ! "$SIDECAR_TARGET" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
+  echo "FENNEC_SIDECAR_TARGET must be one Rust target triple, not a path: $SIDECAR_TARGET" >&2
+  exit 1
+fi
+OSDIR="$(osdir_for "$SIDECAR_TARGET")"
+if [ -z "$OSDIR" ]; then
+  echo "Unsupported FENNEC_SIDECAR_TARGET: $SIDECAR_TARGET" >&2
+  exit 1
+fi
+
 if [ ! -d "$PLATFORM/lib" ]; then
   echo "IntelliJ Platform not found at: $PLATFORM" >&2
   echo "Set FENNEC_IDE_PLATFORM to a JetBrains IDE installation directory." >&2
-  exit 1
-fi
-if [ ! -f "$KOTLINC" ]; then
-  echo "kotlinc not found at: $KOTLINC" >&2
-  echo "Set KOTLINC to a Kotlin compiler (kotlinc.bat on Windows)." >&2
   exit 1
 fi
 
@@ -37,7 +73,7 @@ echo "sidecar target: $SIDECAR_TARGET"
 
 # --- Rust sidecar (offline, dependency-light) ---
 echo "=== building Rust sidecar ==="
-( cd "$HERE/sidecar" && cargo build --release --offline -j 6 --target "$SIDECAR_TARGET" )
+( cd "$HERE/sidecar" && cargo build --release --offline -j 6 --target-dir "$HERE/sidecar/target" --target "$SIDECAR_TARGET" )
 
 rm -rf "$OUT"
 mkdir -p "$CLASSES" "$DIST/lib"
@@ -66,40 +102,30 @@ echo "=== compiling Kotlin ==="
 # --- resources (plugin.xml, icon) ---
 cp -r "$HERE/src/main/resources/." "$CLASSES/"
 
-# --- bundle every built sidecar binary under its OS dir ---
-osdir_for() {
-  case "$1" in
-    x86_64-pc-windows-*)   echo "windows-x64" ;;
-    aarch64-pc-windows-*)  echo "windows-arm64" ;;
-    x86_64-apple-darwin)   echo "macos-x64" ;;
-    aarch64-apple-darwin)  echo "macos-arm64" ;;
-    x86_64-unknown-linux-*)  echo "linux-x64" ;;
-    aarch64-unknown-linux-*) echo "linux-arm64" ;;
-    *) echo "" ;;
-  esac
-}
-packaged=0
-for bindir in "$HERE/sidecar/target/"*/release; do
-  [ -d "$bindir" ] || continue
-  triple="$(basename "$(dirname "$bindir")")"
-  osdir="$(osdir_for "$triple")"
-  [ -n "$osdir" ] || continue
-  case "$osdir" in
-    windows-*) name="fennec-acp.exe" ;;
-    *) name="fennec-acp" ;;
-  esac
-  bin="$bindir/$name"
-  if [ -f "$bin" ]; then
-    mkdir -p "$CLASSES/sidecar/$osdir"
-    cp "$bin" "$CLASSES/sidecar/$osdir/$name"
-    echo "packaged sidecar: $osdir/$name ($(wc -c < "$bin") bytes)"
-    packaged=$((packaged + 1))
-  fi
-done
-if [ "$packaged" -eq 0 ]; then
-  echo "No sidecar binary was packaged; build one first." >&2
+# --- bundle only the configured sidecar target under its OS dir ---
+TARGET_ROOT="$(cd "$HERE/sidecar/target" && pwd -P)"
+BINDIR="$TARGET_ROOT/$SIDECAR_TARGET/release"
+if [ ! -d "$BINDIR" ]; then
+  echo "No sidecar build found for configured target: $SIDECAR_TARGET" >&2
   exit 1
 fi
+RESOLVED_BINDIR="$(cd "$BINDIR" && pwd -P)"
+if [ "$RESOLVED_BINDIR" != "$BINDIR" ]; then
+  echo "Refusing to package a sidecar path outside $TARGET_ROOT/$SIDECAR_TARGET/release." >&2
+  exit 1
+fi
+case "$OSDIR" in
+  windows-*) name="fennec-acp.exe" ;;
+  *) name="fennec-acp" ;;
+esac
+bin="$RESOLVED_BINDIR/$name"
+if [ ! -f "$bin" ]; then
+  echo "Required sidecar binary not found for $SIDECAR_TARGET: $bin" >&2
+  exit 1
+fi
+mkdir -p "$CLASSES/sidecar/$OSDIR"
+cp "$bin" "$CLASSES/sidecar/$OSDIR/$name"
+echo "packaged sidecar: $OSDIR/$name ($(wc -c < "$bin") bytes)"
 
 # --- jar + zip ---
 "$JAR" --create --file "$DIST/lib/fennec-jetbrains.jar" -C "$CLASSES" .
