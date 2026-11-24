@@ -1,9 +1,11 @@
-//! Client for the suite's loopback embedding service. fennec-core's
-//! `EngineClient.embed` posts `{"input": [...]}` to `/v1/embeddings` on the NPU
-//! server at http://127.0.0.1:8182 and reads `{"data": [{"embedding": [...]}]}`.
-//! This is the same contract over a minimal HTTP/1.1 transport: the service is
-//! always loopback plain HTTP, so a TLS stack would be dead weight. If it is
-//! unreachable the caller gets an error - never a fabricated vector.
+//! Client for an optional loopback embedding endpoint. `FENNEC_EMBED_URL` names
+//! it; the default is the address fennec-core's `EngineClient.embed` used,
+//! http://127.0.0.1:8182. The contract is `{"input": [...]}` posted to
+//! `/v1/embeddings`, answered with `{"data": [{"embedding": [...]}]}`, over a
+//! minimal HTTP/1.1 transport: the endpoint is always loopback plain HTTP, so a
+//! TLS stack would be dead weight. Nothing in the suite serves it by default, so
+//! an error here is expected and `context/search` ranks the same documents by
+//! BM25 instead - never by a fabricated vector.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};

@@ -1,6 +1,7 @@
 //! End-to-end tests that run the built sidecar binary: launcher forwarding
 //! against a fake fennec-core (ported from air/tests/test_fennec_acp.py) and
-//! the stdio JSON-RPC surface with a loopback fake embedding service.
+//! the stdio JSON-RPC surface with a loopback fake embedding endpoint, and
+//! without one.
 //! No engine, no model, no real network, no IDE.
 
 use std::fs;
@@ -368,28 +369,41 @@ fn rpc_search_indexes_and_ranks_with_real_cosine_scores() {
     let expected = 0.9 / (f64::sqrt(0.81 + 0.01) + 1e-9);
     assert!((score - expected).abs() < 1e-6, "score {score} vs {expected}");
     assert!(results[1]["score"].as_f64().unwrap() < score);
+    assert_eq!(replies[0]["result"]["mode"], json!("semantic"));
+    assert_eq!(replies[1]["result"]["mode"], json!("semantic"));
     drop(server);
 }
 
 #[test]
-fn rpc_search_without_the_service_is_an_error_not_invented_scores() {
+fn rpc_search_without_the_service_ranks_the_stored_text() {
     let temp = Temp::new("rpc-down");
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
     let mut command = rpc_command(&temp.home());
     command.env("FENNEC_EMBED_URL", format!("http://127.0.0.1:{port}"));
-    let request = json!({
+    let index = json!({
         "jsonrpc": "2.0", "id": 1, "method": "context/search",
-        "params": {"query": "anything", "documents": [{"id": "d", "text": "body"}]}
+        "params": {"documents": [
+            {"id": "cat-doc", "text": "the cat sat on the mat"},
+            {"id": "dog-doc", "text": "the dog ran in the park"}
+        ]}
     });
-    let (code, stdout, stderr) = run_with_stdin(&mut command, &format!("{request}\n"));
+    let search = json!({
+        "jsonrpc": "2.0", "id": 2, "method": "context/search",
+        "params": {"query": "cat", "k": 2}
+    });
+    let (code, stdout, stderr) = run_with_stdin(&mut command, &format!("{index}\n{search}\n"));
     assert_eq!(code, 0, "stderr: {stderr}");
     let replies = rpc_replies(&stdout);
-    assert_eq!(replies.len(), 1);
-    assert_eq!(replies[0]["error"]["code"], json!(-32000));
-    assert!(replies[0]["error"]["message"].as_str().unwrap().contains("embedding"));
-    assert!(replies[0].get("result").is_none());
+    assert_eq!(replies.len(), 2);
+    assert_eq!(replies[0]["result"]["indexed"], json!(2));
+    assert_eq!(replies[0]["result"]["mode"], json!("lexical"));
+    assert_eq!(replies[1]["result"]["mode"], json!("lexical"));
+    let results = replies[1]["result"]["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1, "only the cat document holds the term: {results:?}");
+    assert_eq!(results[0]["id"], json!("cat-doc"));
+    assert!(results[0]["score"].as_f64().unwrap() > 0.0);
 }
 
 #[test]

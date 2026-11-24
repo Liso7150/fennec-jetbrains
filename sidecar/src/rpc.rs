@@ -1,8 +1,9 @@
 //! JSON-RPC 2.0 over newline-delimited JSON on stdio. Two methods:
 //! `context/chunk` (pure Rust structural chunking) and `context/search`
-//! (cosine over the in-memory index, embeddings from the loopback service).
-//! A request that cannot be answered honestly gets an error object, never a
-//! fabricated result.
+//! (cosine over the in-memory index when an embedding endpoint answers, BM25
+//! over the stored chunk text when it does not). Every search says which of the
+//! two scored it. A request that cannot be answered honestly gets an error
+//! object, never a fabricated result.
 
 use std::io::{BufRead, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -11,7 +12,7 @@ use serde_json::{json, Map, Value};
 
 use crate::chunk::chunk_source;
 use crate::embed;
-use crate::search::Index;
+use crate::search::{Document, Index, Mode};
 
 pub struct State {
     pub index: Index,
@@ -165,7 +166,7 @@ fn context_search(params: &Value, state: &mut State) -> Result<Value, RpcError> 
 
     let mut result = Map::new();
     if let Some(items) = documents {
-        let mut ids = Vec::with_capacity(items.len());
+        let mut docs = Vec::with_capacity(items.len());
         let mut texts = Vec::with_capacity(items.len());
         for item in items {
             let doc = item
@@ -175,22 +176,36 @@ fn context_search(params: &Value, state: &mut State) -> Result<Value, RpcError> 
             if id.is_empty() {
                 return Err(RpcError::invalid_params("document id must not be empty"));
             }
-            ids.push(id.to_string());
-            texts.push(string_field(doc, "text")?.to_string());
+            let text = string_field(doc, "text")?.to_string();
+            texts.push(text.clone());
+            docs.push(Document { id: id.to_string(), text, vector: None });
         }
-        let vectors = embed::embed(&state.embed_url, &texts)
-            .map_err(|e| RpcError::new(-32000, e))?;
-        state.index.replace(ids.into_iter().zip(vectors).collect());
+        // An unreachable endpoint is not a failure: the text is stored either
+        // way and BM25 ranks it. Only a complete set of vectors is kept, so a
+        // short reply cannot silently pair a vector with the wrong document.
+        let vectors = embed::embed(&state.embed_url, &texts).unwrap_or_default();
+        if vectors.len() == docs.len() {
+            for (doc, vector) in docs.iter_mut().zip(vectors) {
+                doc.vector = Some(vector);
+            }
+            result.insert("mode".into(), json!(Mode::Semantic));
+        } else {
+            result.insert("mode".into(), json!(Mode::Lexical));
+        }
+        state.index.replace(docs);
         result.insert("indexed".into(), json!(state.index.len()));
     }
     if let Some(query) = query {
-        let vectors = embed::embed(&state.embed_url, &[query.to_string()])
-            .map_err(|e| RpcError::new(-32000, e))?;
-        let hits = state
+        let vector = match embed::embed(&state.embed_url, &[query.to_string()]) {
+            Ok(vectors) => vectors.into_iter().next(),
+            Err(_) => None,
+        };
+        let (hits, mode) = state
             .index
-            .search(&vectors[0], k)
+            .search(query, vector.as_deref(), k)
             .map_err(RpcError::invalid_params)?;
         result.insert("results".into(), json!(hits));
+        result.insert("mode".into(), json!(mode));
     }
     result.insert("total".into(), json!(state.index.len()));
     Ok(Value::Object(result))
@@ -253,16 +268,30 @@ mod tests {
     }
 
     #[test]
-    fn search_without_a_service_is_an_error_not_a_fake_score() {
+    fn search_without_a_service_ranks_lexically_and_says_so() {
         let mut s = state();
         let reply = call(
-            r#"{"jsonrpc":"2.0","id":6,"method":"context/search","params":{"query":"anything","documents":[{"id":"d","text":"body"}]}}"#,
+            r#"{"jsonrpc":"2.0","id":6,"method":"context/search","params":{"query":"body","documents":[{"id":"d","text":"a body of work"},{"id":"e","text":"nothing here"}]}}"#,
             &mut s,
         );
-        assert_eq!(reply["error"]["code"], json!(-32000));
-        assert!(reply["error"]["message"].as_str().unwrap().contains("embedding service unavailable"));
-        assert!(reply.get("result").is_none());
-        assert_eq!(s.index.len(), 0);
+        assert!(reply.get("error").is_none(), "{reply}");
+        assert_eq!(reply["result"]["indexed"], json!(2));
+        assert_eq!(reply["result"]["mode"], json!("lexical"));
+        assert_eq!(reply["result"]["results"][0]["id"], json!("d"));
+        assert_eq!(reply["result"]["total"], json!(2));
+        assert_eq!(s.index.len(), 2);
+    }
+
+    #[test]
+    fn indexing_without_a_service_stores_the_documents_as_lexical() {
+        let mut s = state();
+        let reply = call(
+            r#"{"jsonrpc":"2.0","id":10,"method":"context/search","params":{"documents":[{"id":"d","text":"body"}]}}"#,
+            &mut s,
+        );
+        assert_eq!(reply["result"]["indexed"], json!(1));
+        assert_eq!(reply["result"]["mode"], json!("lexical"));
+        assert!(reply["result"].get("results").is_none());
     }
 
     #[test]
