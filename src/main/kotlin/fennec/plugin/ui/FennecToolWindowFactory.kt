@@ -9,7 +9,7 @@ import com.intellij.ui.content.ContentFactory
 class FennecToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val panel = FennecContextPanel(project)
-        val content = ContentFactory.getInstance().createContent(panel, "Context", false)
+        val content = ContentFactory.getInstance().createContent(panel, "", false)
         toolWindow.contentManager.addContent(content)
         Disposer.register(content, panel)
     }

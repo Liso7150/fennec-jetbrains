@@ -25,9 +25,8 @@ import java.util.logging.Logger
  * Publishes Fennec as an agent card in Air's agent catalog.
  *
  * Air builds its Agents page from the external ACP registry, not from acp.json.
- * A local command distribution cannot be expressed in the registry itself, so
- * the launch command - the bundled Rust sidecar - is injected through Air's
- * installed overlay, which is read from next to acp.json.
+ * Fennec publishes the catalog card there, then supplies the bundled Rust
+ * sidecar command through Air's installed overlay.
  *
  * Everything is idempotent and rebuilt on every IDE start, because Air may
  * refresh its own cached registry at any time.
@@ -85,7 +84,7 @@ internal object AirAgentRegistrar {
         val launcher = SidecarLocator.install(home, sidecar)
         removeLegacyPickerEntry(home, launcher)
 
-        val agent = registryEntry(version)
+        val agent = registryEntry(version, launcher)
         val registry = home.resolve(".fennec").resolve("air").resolve("registry.json")
         val overlay = home.resolve(".jetbrains").resolve("acp-registry-installed-overlay.json")
         val published = buildRegistry(registry, agent, systemDir)
@@ -94,8 +93,7 @@ internal object AirAgentRegistrar {
             System.setProperty(REGISTRY_PROPERTY, registryPath)
             ensureRegistryVmOption(configDir, registryPath)
             LOG.info("Fennec registry published at $registry ($registryPath)")
-            // The overlay is the only place Air accepts a local command, so it is
-            // what actually launches the ACP agent on this machine.
+            // Keep the installed overlay aligned with the local catalog command.
             writeInstalled(commonDataDir, agent)
             writeOverlay(overlay, launcher)
         } else {
@@ -149,7 +147,7 @@ internal object AirAgentRegistrar {
         return FALLBACK_VERSION
     }
 
-    private fun registryEntry(version: String): JsonObject {
+    private fun registryEntry(version: String, launcher: Path): JsonObject {
         val entry = JsonObject()
         entry.addProperty("id", AGENT_ID)
         entry.addProperty("name", AGENT_NAME)
@@ -167,9 +165,28 @@ internal object AirAgentRegistrar {
         entry.add("authors", authors)
         entry.addProperty("license", "proprietary")
         entry.addProperty("icon", "https://raw.githubusercontent.com/Liso7150/fennec-jetbrains/main/icon.svg")
-        // No distribution here: Air's registry only models downloadable binaries, and
-        // Fennec runs from this machine. writeOverlay carries the launch command.
+
+        val binaryTarget = JsonObject()
+        binaryTarget.addProperty("archive", REPOSITORY)
+        binaryTarget.addProperty("cmd", "./${launcher.fileName}")
+        binaryTarget.add("args", JsonArray())
+        binaryTarget.add("env", JsonObject())
+        val binary = JsonObject()
+        binary.add(airPlatformKey(), binaryTarget)
+        val distribution = JsonObject()
+        distribution.add("binary", binary)
+        entry.add("distribution", distribution)
+
         return entry
+    }
+
+    private fun airPlatformKey(): String = when (SidecarLocator.osDir()) {
+        "windows-x64" -> "windows-x86_64"
+        "windows-arm64" -> "windows-aarch64"
+        "macos-x64" -> "darwin-x86_64"
+        "macos-arm64" -> "darwin-aarch64"
+        "linux-x64" -> "linux-x86_64"
+        else -> "linux-aarch64"
     }
 
     /**
@@ -207,9 +224,8 @@ internal object AirAgentRegistrar {
     }
 
     /**
-     * The installed overlay is the only place Air accepts a local command
-     * distribution; the registry models it as transient by design. The sidecar
-     * is a self-contained executable, so it is the command and takes no args.
+     * Mirror the local command into Air's installed overlay. The sidecar is a
+     * self-contained executable, so it is the command and takes no args.
      */
     private fun writeOverlay(file: Path, launcher: Path) {
         val root = try {

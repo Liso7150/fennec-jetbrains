@@ -34,6 +34,7 @@ object TestMain {
         SharedConfigTest.run()
         AirAgentRegistrarTest.run()
         UpdaterTest.run()
+        PluginDescriptorTest.run()
         println("----------------------------------------")
         println("passed=$passed failed=$failed")
         if (failed > 0) {

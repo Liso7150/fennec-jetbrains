@@ -85,6 +85,32 @@ object AirAgentRegistrarTest {
             TestMain.expectEquals(listOf("other", "fennec"), f.agentIds(registry), "merged agents")
         }
 
+        TestMain.check("publishes a catalog entry and keeps the local command in the overlay") {
+            val f = Fixture()
+            f.cacheRegistry(cachedCatalog)
+            f.register()
+            val catalogAgent = f.readJson(f.registry)
+                .getAsJsonArray("agents").first { it.asJsonObject.get("id").asString == "fennec" }
+                .asJsonObject
+            val platform = when (SidecarLocator.osDir()) {
+                "windows-x64" -> "windows-x86_64"
+                "windows-arm64" -> "windows-aarch64"
+                "macos-x64" -> "darwin-x86_64"
+                "macos-arm64" -> "darwin-aarch64"
+                "linux-x64" -> "linux-x86_64"
+                else -> "linux-aarch64"
+            }
+            val binary = catalogAgent.getAsJsonObject("distribution")
+                .getAsJsonObject("binary").getAsJsonObject(platform)
+            TestMain.expectEquals("https://github.com/Liso7150/fennec-jetbrains", binary.get("archive").asString, "catalog archive")
+            TestMain.expectEquals("./${SidecarLocator.binaryName()}", binary.get("cmd").asString, "catalog command")
+            val local = f.readJson(f.overlay)
+                .getAsJsonObject("agents").getAsJsonObject("acp.registry.fennec")
+                .getAsJsonObject("agent").getAsJsonObject("distribution").getAsJsonObject("local")
+            TestMain.expectEquals(f.launcher.toString(), local.get("command").asString, "overlay command")
+            TestMain.expectEquals(0, local.getAsJsonArray("args").size(), "overlay args empty")
+        }
+
         TestMain.check("removes legacy colibri from the merged registry") {
             val f = Fixture()
             f.cacheRegistry("""{"agents":[{"id":"colibri"},{"id":"other"},{"id":"fennec"}]}""")

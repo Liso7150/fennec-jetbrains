@@ -31,7 +31,7 @@ class FennecConfigurable : Configurable {
             }
             row("Search results:") {
                 spinner(1..20, 1).bindIntValue(state::resultLimit)
-                    .comment("Maximum number of semantic search results the sidecar returns.")
+                    .comment("Maximum number of search results the sidecar returns.")
             }
             row("Engine Python:") {
                 label(python)

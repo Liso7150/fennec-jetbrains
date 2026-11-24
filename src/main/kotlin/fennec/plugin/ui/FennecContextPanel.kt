@@ -31,8 +31,10 @@ import javax.swing.JPanel
 import javax.swing.JSplitPane
 
 /**
- * Indexes the open file into the sidecar's structural chunks, embeds them, and
- * runs semantic search against the loopback embedding service. PSI is read in
+ * Indexes the open file into the sidecar's structural chunks and searches them:
+ * cosine when an embedding endpoint answers, BM25 over the stored chunk text
+ * otherwise. The sidecar reports which scorer ran and the status line shows it.
+ * PSI is read in
  * [readAction]; every Swing mutation hops to the EDT; sidecar logs arrive on a
  * Flow. The panel owns a coroutine scope cancelled when its content is disposed.
  */
@@ -174,7 +176,12 @@ class FennecContextPanel(private val project: Project) : JPanel(BorderLayout()),
                     listModel.clear()
                     items.forEach { listModel.addElement(it) }
                 }
-                setStatus(if (items.isEmpty()) "No matches for \"$query\"" else "${items.size} matches for \"$query\"")
+                val mode = result.get("mode")?.takeIf { it.isJsonPrimitive }?.asString
+                val scored = if (mode == null) "" else " · $mode"
+                setStatus(
+                    if (items.isEmpty()) "No matches for \"$query\"$scored"
+                    else "${items.size} matches for \"$query\"$scored"
+                )
             } catch (e: Exception) {
                 setStatus("Search failed: ${e.message}")
             }

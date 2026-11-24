@@ -12,8 +12,9 @@
     can be enabled, disabled and removed from Air's Agents page like any other agent. The engine starts
     on the first prompt, not when Air opens, and stops after it has been idle, so an open IDE costs no
     model memory. An engine that was already running is attached to and left alone.</p>
-    <p>A <b>Fennec</b> tool window indexes the open file into structural chunks and runs semantic search
-    against the local embedding service; results navigate straight to the symbol. Settings live under
+    <p>A <b>Fennec</b> tool window indexes the open file into structural chunks and searches them —
+    by cosine over an embedding endpoint when one is configured, by BM25 over the chunk text
+    otherwise; results navigate straight to the symbol. Settings live under
     Tools &rarr; Fennec.</p>
     <p>ACP itself is implemented once, in fennec-core, so the IDE, the desktop app, the CLI and the
     browser agents share the same protocol behaviour. Optional browser outlets (Fennec's own
@@ -27,10 +28,11 @@
 
   <extensions defaultExtensionNs="com.intellij">
     <postStartupActivity implementation="fennec.plugin.FennecStartupActivity"/>
-    <toolWindow id="Fennec" anchor="right" icon="/icons/fennec.svg"
-                factoryClass="fennec.plugin.ui.FennecToolWindowFactory"/>
     <applicationConfigurable parentId="tools" id="fennec.settings" displayName="Fennec"
                              implementation="fennec.plugin.ui.FennecConfigurable"/>
     <notificationGroup id="Fennec Updates" displayType="BALLOON"/>
+    <toolWindow id="Fennec" anchor="right" secondary="true"
+                icon="/icons/fennec.svg"
+                factoryClass="fennec.plugin.ui.FennecToolWindowFactory"/>
   </extensions>
 </idea-plugin>
