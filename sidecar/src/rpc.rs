@@ -6,22 +6,35 @@
 //! object, never a fabricated result.
 
 use std::io::{BufRead, Write};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::chunk::chunk_source;
+use crate::controls::{AccessMode, Controls};
 use crate::embed;
 use crate::search::{Document, Index, Mode};
 
 pub struct State {
     pub index: Index,
     pub embed_url: String,
+    pub controls: Controls,
 }
 
 impl State {
     pub fn new(embed_url: String) -> State {
-        State { index: Index::default(), embed_url }
+        State::with_controls(
+            embed_url,
+            Controls::new(&fennec_client::suite::real_environ()),
+        )
+    }
+
+    pub fn with_controls(embed_url: String, controls: Controls) -> State {
+        State {
+            index: Index::default(),
+            embed_url,
+            controls,
+        }
     }
 }
 
@@ -32,7 +45,10 @@ struct RpcError {
 
 impl RpcError {
     fn new(code: i64, message: impl Into<String>) -> RpcError {
-        RpcError { code, message: message.into() }
+        RpcError {
+            code,
+            message: message.into(),
+        }
     }
 
     fn invalid_params(message: impl Into<String>) -> RpcError {
@@ -50,7 +66,11 @@ fn response(id: Value, result: Result<Value, RpcError>) -> Value {
     }
 }
 
-pub fn serve(reader: impl BufRead, writer: &mut impl Write, state: &mut State) -> std::io::Result<()> {
+pub fn serve(
+    reader: impl BufRead,
+    writer: &mut impl Write,
+    state: &mut State,
+) -> std::io::Result<()> {
     for line in reader.lines() {
         let line = line?;
         if line.trim().is_empty() {
@@ -84,7 +104,10 @@ pub fn handle_line(line: &str, state: &mut State) -> Option<Value> {
             .as_object()
             .ok_or_else(|| RpcError::new(-32600, "Invalid Request: expected a JSON object"))?;
         if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
-            return Err(RpcError::new(-32600, "Invalid Request: jsonrpc must be \"2.0\""));
+            return Err(RpcError::new(
+                -32600,
+                "Invalid Request: jsonrpc must be \"2.0\"",
+            ));
         }
         let method = object
             .get("method")
@@ -95,7 +118,10 @@ pub fn handle_line(line: &str, state: &mut State) -> Option<Value> {
     }));
     let outcome = match outcome {
         Ok(outcome) => outcome,
-        Err(_) => Err(RpcError::new(-32603, "Internal error: the request panicked")),
+        Err(_) => Err(RpcError::new(
+            -32603,
+            "Internal error: the request panicked",
+        )),
     };
     if notification {
         None
@@ -108,6 +134,8 @@ fn dispatch(method: &str, params: &Value, state: &mut State) -> Result<Value, Rp
     match method {
         "context/chunk" => context_chunk(params),
         "context/search" => context_search(params, state),
+        "controls/get" => state.controls.snapshot().map_err(RpcError::invalid_params),
+        "controls/set" => controls_set(params, state),
         _ => Err(RpcError::new(-32601, format!("Method not found: {method}"))),
     }
 }
@@ -125,12 +153,26 @@ fn string_field<'a>(object: &'a Map<String, Value>, key: &str) -> Result<&'a str
         .ok_or_else(|| RpcError::invalid_params(format!("{key} must be a string")))
 }
 
-fn optional_string<'a>(object: &'a Map<String, Value>, key: &str) -> Result<Option<&'a str>, RpcError> {
+fn optional_string<'a>(
+    object: &'a Map<String, Value>,
+    key: &str,
+) -> Result<Option<&'a str>, RpcError> {
     match object.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) => Ok(Some(s.as_str())),
         Some(_) => Err(RpcError::invalid_params(format!("{key} must be a string"))),
     }
+}
+
+fn controls_set(params: &Value, state: &State) -> Result<Value, RpcError> {
+    let object = object_param(params)?;
+    let access =
+        AccessMode::parse(string_field(object, "access")?).map_err(RpcError::invalid_params)?;
+    let model = optional_string(object, "model")?;
+    state
+        .controls
+        .set(access, model)
+        .map_err(RpcError::invalid_params)
 }
 
 fn context_chunk(params: &Value) -> Result<Value, RpcError> {
@@ -151,7 +193,9 @@ fn context_search(params: &Value, state: &mut State) -> Result<Value, RpcError> 
         Some(_) => return Err(RpcError::invalid_params("documents must be an array")),
     };
     if query.is_none() && documents.is_none() {
-        return Err(RpcError::invalid_params("context/search needs a query, documents, or both"));
+        return Err(RpcError::invalid_params(
+            "context/search needs a query, documents, or both",
+        ));
     }
     let k = match object.get("k") {
         None | Some(Value::Null) => 8,
@@ -178,7 +222,11 @@ fn context_search(params: &Value, state: &mut State) -> Result<Value, RpcError> 
             }
             let text = string_field(doc, "text")?.to_string();
             texts.push(text.clone());
-            docs.push(Document { id: id.to_string(), text, vector: None });
+            docs.push(Document {
+                id: id.to_string(),
+                text,
+                vector: None,
+            });
         }
         // An unreachable endpoint is not a failure: the text is stored either
         // way and BM25 ranks it. Only a complete set of vectors is kept, so a
@@ -214,9 +262,19 @@ fn context_search(params: &Value, state: &mut State) -> Result<Value, RpcError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controls::Controls;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn state() -> State {
-        State::new("http://127.0.0.1:1".into())
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let home = std::env::temp_dir().join(format!("fennec-rpc-test-{stamp}"));
+        State::with_controls(
+            "http://127.0.0.1:1".into(),
+            Controls::at(home.clone(), home.join(".fennec").join("config.json")),
+        )
     }
 
     fn call(line: &str, state: &mut State) -> Value {
@@ -244,6 +302,40 @@ mod tests {
     }
 
     #[test]
+    fn controls_round_trip_updates_model_and_access() {
+        let mut s = state();
+        let model = s.controls.home.join("fennec-models").join("qwen");
+        std::fs::create_dir_all(&model).unwrap();
+        std::fs::write(model.join("config.json"), b"{}").unwrap();
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "controls/set",
+            "params": { "access": "auto", "model": model }
+        });
+        let reply = call(&request.to_string(), &mut s);
+        assert!(reply.get("error").is_none(), "{reply}");
+        assert_eq!(reply["result"]["access"], json!("auto"));
+        assert_eq!(reply["result"]["model"], json!(model.to_string_lossy()));
+        let reply = call(
+            r#"{"jsonrpc":"2.0","id":12,"method":"controls/get"}"#,
+            &mut s,
+        );
+        assert_eq!(reply["result"]["access"], json!("auto"));
+        assert_eq!(reply["result"]["models"][0]["name"], json!("qwen"));
+    }
+
+    #[test]
+    fn controls_reject_unknown_access_modes() {
+        let mut s = state();
+        let reply = call(
+            r#"{"jsonrpc":"2.0","id":13,"method":"controls/set","params":{"access":"trust me"}}"#,
+            &mut s,
+        );
+        assert_eq!(reply["error"]["code"], json!(-32602));
+    }
+
+    #[test]
     fn unknown_methods_and_bad_envelopes_get_spec_errors() {
         let mut s = state();
         let reply = call(r#"{"jsonrpc":"2.0","id":3,"method":"nope"}"#, &mut s);
@@ -260,11 +352,13 @@ mod tests {
     #[test]
     fn notifications_get_no_response() {
         let mut s = state();
-        assert!(handle_line(
-            r#"{"jsonrpc":"2.0","method":"context/chunk","params":{"text":"fn a() {}"}}"#,
-            &mut s
-        )
-        .is_none());
+        assert!(
+            handle_line(
+                r#"{"jsonrpc":"2.0","method":"context/chunk","params":{"text":"fn a() {}"}}"#,
+                &mut s
+            )
+            .is_none()
+        );
     }
 
     #[test]

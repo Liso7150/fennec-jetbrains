@@ -2,7 +2,6 @@ package fennec.plugin.ui
 
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.DialogPanel
-import com.intellij.ui.dsl.builder.bindIntValue
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.panel
@@ -28,10 +27,6 @@ class FennecConfigurable : Configurable {
             row("Sidecar binary:") {
                 textField().bindText(state::sidecarPath)
                     .comment("Leave blank to use the bundled sidecar under ~/.fennec/air. Set a path to override it.")
-            }
-            row("Search results:") {
-                spinner(1..20, 1).bindIntValue(state::resultLimit)
-                    .comment("Maximum number of search results the sidecar returns.")
             }
             row("Engine Python:") {
                 label(python)

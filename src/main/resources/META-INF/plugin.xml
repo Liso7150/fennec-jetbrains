@@ -12,10 +12,10 @@
     can be enabled, disabled and removed from Air's Agents page like any other agent. The engine starts
     on the first prompt, not when Air opens, and stops after it has been idle, so an open IDE costs no
     model memory. An engine that was already running is attached to and left alone.</p>
-    <p>A <b>Fennec</b> tool window indexes the open file into structural chunks and searches them —
-    by cosine over an embedding endpoint when one is configured, by BM25 over the chunk text
-    otherwise; results navigate straight to the symbol. Settings live under
-    Tools &rarr; Fennec.</p>
+    <p>A <b>Fennec</b> tool window controls the local agent: choose Ask every time,
+    Auto approve, or Full access, and select the model folder the engine loads. Access changes
+    apply to new permission requests immediately; model changes apply on the next engine start.
+    Settings live under Tools &rarr; Fennec.</p>
     <p>ACP itself is implemented once, in fennec-core, so the IDE, the desktop app, the CLI and the
     browser agents share the same protocol behaviour. Optional browser outlets (Fennec's own
     loop, decided by Liquid's hosted d1.2, and OpenBot) handle URL-scoped

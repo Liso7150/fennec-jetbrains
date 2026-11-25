@@ -1,24 +1,24 @@
 //! fennec-acp: the Fennec JetBrains sidecar.
 //!
 //! Default mode supervises the ACP agent implemented by fennec-core's acp.py
-//! (the protocol stays in Python). `--rpc` serves the plugin's context JSON-RPC
-//! surface instead. `--check` and `--version` behave like the Python launcher
+//! (the protocol stays in Python). `--rpc` serves the plugin's control and context
+//! JSON-RPC surface instead. `--check` and `--version` behave like the Python launcher
 //! they replace.
 
 use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use fennec_sidecar::discovery::Environ;
-use fennec_sidecar::{embed, rpc, supervisor, VERSION};
+use fennec_sidecar::{VERSION, embed, rpc, supervisor};
 
 const USAGE: &str = "usage: fennec-acp [--check] [--rpc] [--version]
 
 Launch the Fennec ACP agent implemented by fennec-core, or serve the plugin's
-context JSON-RPC surface.
+control and context JSON-RPC surface.
 
 options:
   --check    print the capabilities the agent advertises, then exit
-  --rpc      serve context/chunk and context/search over stdio (NDJSON)
+  --rpc      serve controls/get, controls/set, context/chunk and context/search
   --version  print the sidecar version and exit
   -h, --help show this message and exit
 
@@ -38,7 +38,9 @@ fn main() {
 fn run_mode(args: &[String], launcher_dir: &Path, environ: &Environ) -> i32 {
     match args {
         [] => supervisor::run(&[], launcher_dir, environ),
-        [flag] if flag == "--check" => supervisor::run(&["--check".to_string()], launcher_dir, environ),
+        [flag] if flag == "--check" => {
+            supervisor::run(&["--check".to_string()], launcher_dir, environ)
+        }
         [flag] if flag == "--version" => {
             println!("fennec-acp {VERSION}");
             0

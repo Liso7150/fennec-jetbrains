@@ -32,6 +32,7 @@ object TestMain {
     @JvmStatic
     fun main(args: Array<String>) {
         SharedConfigTest.run()
+        FennecControlsTest.run()
         AirAgentRegistrarTest.run()
         UpdaterTest.run()
         PluginDescriptorTest.run()

@@ -12,7 +12,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const BIN: &str = env!("CARGO_BIN_EXE_fennec-acp");
 
@@ -64,6 +64,15 @@ def main(argv=None):
             sys.stdout.write(line)
             sys.stdout.flush()
         return 0
+    if mode == "permission":
+        request = {"jsonrpc": "2.0", "id": "fennec-1", "method": "session/request_permission", "params": {"sessionId": "s"}}
+        sys.stdout.write(json.dumps(request) + "\n")
+        sys.stdout.flush()
+        reply = sys.stdin.readline()
+        if trace:
+            with open(trace, "a", encoding="utf-8") as stream:
+                stream.write(reply)
+        return 0
     if mode == "crash":
         sys.stderr.write("fake agent crashed\n")
         sys.stderr.flush()
@@ -84,7 +93,16 @@ fn make_core(base: &Path) -> PathBuf {
 
 fn base_command(home: &Path) -> Command {
     let mut command = Command::new(BIN);
-    for key in ["FENNEC_CORE", "FENNEC_SUITE", "FENNEC_CONFIG", "FENNEC_PYTHON", "FENNEC_EMBED_URL", "FENNEC_TEST_TRACE", "FENNEC_TEST_MODE", "PYTHONPATH"] {
+    for key in [
+        "FENNEC_CORE",
+        "FENNEC_SUITE",
+        "FENNEC_CONFIG",
+        "FENNEC_PYTHON",
+        "FENNEC_EMBED_URL",
+        "FENNEC_TEST_TRACE",
+        "FENNEC_TEST_MODE",
+        "PYTHONPATH",
+    ] {
         command.env_remove(key);
     }
     command.env("USERPROFILE", home);
@@ -100,7 +118,12 @@ fn run_with_stdin(command: &mut Command, input: &str) -> (i32, String, String) {
         .stderr(Stdio::piped())
         .spawn()
         .expect("sidecar binary spawns");
-    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
     let output = child.wait_with_output().unwrap();
     (
         output.status.code().unwrap_or(-1),
@@ -148,7 +171,11 @@ fn a_missing_core_exits_two_with_a_readable_reason() {
     // acp with a module that raises: "no core anywhere", not just "no checkout".
     let shadow = temp.root.join("shadow");
     fs::create_dir_all(&shadow).unwrap();
-    fs::write(shadow.join("acp.py"), "raise ImportError(\"no core here\")\n").unwrap();
+    fs::write(
+        shadow.join("acp.py"),
+        "raise ImportError(\"no core here\")\n",
+    )
+    .unwrap();
     let mut command = base_command(&home);
     command
         .env("FENNEC_CORE", temp.root.join("gone"))
@@ -159,7 +186,14 @@ fn a_missing_core_exits_two_with_a_readable_reason() {
     assert!(stderr.contains("[fennec-acp]"), "{stderr}");
     assert!(stderr.contains("fennec-core was not found"), "{stderr}");
     assert!(
-        stderr.contains(&temp.root.join("gone-suite").join("fennec-core").display().to_string()),
+        stderr.contains(
+            &temp
+                .root
+                .join("gone-suite")
+                .join("fennec-core")
+                .display()
+                .to_string()
+        ),
         "{stderr}"
     );
 }
@@ -177,7 +211,10 @@ fn an_installed_core_runs_when_no_checkout_exists() {
         .env("FENNEC_SUITE", temp.root.join("gone-suite"))
         .env("PYTHONPATH", &site);
     let (code, _, stderr) = run_with_stdin(&mut command, "");
-    assert_eq!(code, 7, "the interpreter's acp module should run as the agent: {stderr}");
+    assert_eq!(
+        code, 7,
+        "the interpreter's acp module should run as the agent: {stderr}"
+    );
 }
 
 #[test]
@@ -203,7 +240,9 @@ fn no_arguments_starts_the_stdio_agent() {
     let core = make_core(&temp.root.join("core"));
     let trace = temp.root.join("trace.jsonl");
     let mut command = base_command(&home);
-    command.env("FENNEC_CORE", &core).env("FENNEC_TEST_TRACE", &trace);
+    command
+        .env("FENNEC_CORE", &core)
+        .env("FENNEC_TEST_TRACE", &trace);
     let (code, _, stderr) = run_with_stdin(&mut command, "");
     assert_eq!(code, 7, "stderr: {stderr}");
     assert_eq!(trace_calls(&trace), vec![json!([])]);
@@ -217,7 +256,11 @@ fn the_suite_root_from_the_shared_config_is_searched() {
     make_core(&suite.join("fennec-core"));
     let config = home.join(".fennec").join("config.json");
     fs::create_dir_all(config.parent().unwrap()).unwrap();
-    fs::write(&config, format!("{{\"suite_root\": {:?}}}", suite.display().to_string())).unwrap();
+    fs::write(
+        &config,
+        format!("{{\"suite_root\": {:?}}}", suite.display().to_string()),
+    )
+    .unwrap();
     let trace = temp.root.join("trace.jsonl");
     let mut command = base_command(&home);
     command.env("FENNEC_TEST_TRACE", &trace);
@@ -243,6 +286,44 @@ fn stdio_is_pumped_both_ways_and_eof_shuts_the_agent_down() {
 }
 
 #[test]
+fn auto_access_answers_permission_requests_before_the_ide_sees_them() {
+    let temp = Temp::new("permission");
+    let home = temp.home();
+    let core = make_core(&temp.root.join("core"));
+    let access = home.join(".fennec").join("air").join("access.json");
+    fs::create_dir_all(access.parent().unwrap()).unwrap();
+    fs::write(&access, b"{\"mode\":\"auto\"}\n").unwrap();
+    let trace = temp.root.join("trace.jsonl");
+    let mut command = base_command(&home);
+    command
+        .env("FENNEC_CORE", &core)
+        .env("FENNEC_TEST_MODE", "permission")
+        .env("FENNEC_TEST_TRACE", &trace);
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("sidecar binary spawns");
+    let _open_stdin = child.stdin.take().unwrap();
+    let output = child.wait_with_output().unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(
+        stdout.trim().is_empty(),
+        "permission request leaked to the IDE: {stdout}; stderr: {stderr}"
+    );
+    let calls = trace_calls(&trace);
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(
+        calls[1]["result"]["outcome"]["optionId"],
+        json!("allow_always")
+    );
+}
+
+#[test]
 fn a_crashing_agent_is_reported_and_its_code_propagates() {
     let temp = Temp::new("crash");
     let home = temp.home();
@@ -254,7 +335,10 @@ fn a_crashing_agent_is_reported_and_its_code_propagates() {
     let (code, _, stderr) = run_with_stdin(&mut command, "");
     assert_eq!(code, 42);
     assert!(stderr.contains("fake agent crashed"), "{stderr}");
-    assert!(stderr.contains("the ACP agent exited with code 42"), "{stderr}");
+    assert!(
+        stderr.contains("the ACP agent exited with code 42"),
+        "{stderr}"
+    );
 }
 
 // ---- the JSON-RPC surface ----
@@ -280,15 +364,54 @@ fn rpc_chunks_source_over_stdio() {
         "jsonrpc": "2.0", "id": 1, "method": "context/chunk",
         "params": {"text": "pub fn alpha() {}\nfn beta() {}\n", "path": "lib.rs"}
     });
-    let (code, stdout, stderr) = run_with_stdin(&mut rpc_command(&temp.home()), &format!("{request}\n"));
+    let (code, stdout, stderr) =
+        run_with_stdin(&mut rpc_command(&temp.home()), &format!("{request}\n"));
     assert_eq!(code, 0, "stderr: {stderr}");
     let replies = rpc_replies(&stdout);
     assert_eq!(replies.len(), 1);
     assert_eq!(replies[0]["id"], json!(1));
     let chunks = replies[0]["result"]["chunks"].as_array().unwrap();
-    let symbols: Vec<&str> = chunks.iter().map(|c| c["symbol"].as_str().unwrap()).collect();
+    let symbols: Vec<&str> = chunks
+        .iter()
+        .map(|c| c["symbol"].as_str().unwrap())
+        .collect();
     assert_eq!(symbols, vec!["alpha", "beta"]);
     assert_eq!(chunks[0]["start_byte"], json!(0));
+}
+
+#[test]
+fn rpc_controls_update_shared_model_and_access() {
+    let temp = Temp::new("rpc-controls");
+    let home = temp.home();
+    let model = home.join("fennec-models").join("qwen");
+    fs::create_dir_all(&model).unwrap();
+    fs::write(model.join("config.json"), b"{}").unwrap();
+    let config = home.join(".fennec").join("config.json");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&config, b"{\"backend\":\"vulkan\",\"custom\":7}\n").unwrap();
+    let set = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "controls/set",
+        "params": {"access": "full", "model": model}
+    });
+    let get = json!({"jsonrpc": "2.0", "id": 2, "method": "controls/get"});
+    let input = format!("{set}\n{get}\n");
+    let (code, stdout, stderr) = run_with_stdin(&mut rpc_command(&home), &input);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    let replies = rpc_replies(&stdout);
+    assert_eq!(replies.len(), 2);
+    assert_eq!(replies[0]["result"]["access"], json!("full"));
+    assert_eq!(
+        replies[1]["result"]["model"],
+        json!(model.to_string_lossy())
+    );
+    let written: Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+    assert_eq!(written["backend"], json!("vulkan"));
+    assert_eq!(written["custom"], json!(7));
+    assert!(home.join(".fennec/air/access.json").is_file());
+    assert!(
+        home.join(".fennec/config.json.bak-fennec-controls")
+            .is_file()
+    );
 }
 
 /// One-shot loopback embedding fake: maps known texts to fixed vectors.
@@ -367,7 +490,10 @@ fn rpc_search_indexes_and_ranks_with_real_cosine_scores() {
     assert_eq!(results[0]["id"], json!("cat-doc"));
     let score = results[0]["score"].as_f64().unwrap();
     let expected = 0.9 / (f64::sqrt(0.81 + 0.01) + 1e-9);
-    assert!((score - expected).abs() < 1e-6, "score {score} vs {expected}");
+    assert!(
+        (score - expected).abs() < 1e-6,
+        "score {score} vs {expected}"
+    );
     assert!(results[1]["score"].as_f64().unwrap() < score);
     assert_eq!(replies[0]["result"]["mode"], json!("semantic"));
     assert_eq!(replies[1]["result"]["mode"], json!("semantic"));
@@ -401,7 +527,11 @@ fn rpc_search_without_the_service_ranks_the_stored_text() {
     assert_eq!(replies[0]["result"]["mode"], json!("lexical"));
     assert_eq!(replies[1]["result"]["mode"], json!("lexical"));
     let results = replies[1]["result"]["results"].as_array().unwrap();
-    assert_eq!(results.len(), 1, "only the cat document holds the term: {results:?}");
+    assert_eq!(
+        results.len(),
+        1,
+        "only the cat document holds the term: {results:?}"
+    );
     assert_eq!(results[0]["id"], json!("cat-doc"));
     assert!(results[0]["score"].as_f64().unwrap() > 0.0);
 }
@@ -422,7 +552,8 @@ fn rpc_reports_parse_errors_and_unknown_methods_and_stays_alive() {
 #[test]
 fn rpc_notifications_produce_no_output() {
     let temp = Temp::new("rpc-notif");
-    let input = "{\"jsonrpc\":\"2.0\",\"method\":\"context/chunk\",\"params\":{\"text\":\"fn a() {}\"}}\n";
+    let input =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"context/chunk\",\"params\":{\"text\":\"fn a() {}\"}}\n";
     let (code, stdout, stderr) = run_with_stdin(&mut rpc_command(&temp.home()), input);
     assert_eq!(code, 0, "stderr: {stderr}");
     assert!(stdout.trim().is_empty(), "{stdout}");

@@ -12,7 +12,6 @@ class FennecSettings : PersistentStateComponent<FennecSettings.State> {
 
     data class State(
         var sidecarPath: String = "",
-        var resultLimit: Int = 8,
         var updateChecks: Boolean = true,
         var experimentalChannel: Boolean = false,
     )

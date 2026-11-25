@@ -1,4 +1,5 @@
 pub mod chunk;
+pub mod controls;
 pub mod discovery;
 pub mod embed;
 pub mod rpc;

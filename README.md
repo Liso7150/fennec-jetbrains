@@ -1,17 +1,17 @@
-![Fennec for JetBrains 1.0.0 — a local coding agent inside your IDE: Kotlin plugin, bundled Rust sidecar, no cloud. Registers Fennec as an agent card in JetBrains Air. IntelliJ Platform 263.x, Kotlin 2.4.21, 80 Rust tests, 46 Kotlin checks, MIT license.](docs/hero.png)
+![Fennec for JetBrains 1.0.0 — a local coding agent inside your IDE: Kotlin plugin, bundled Rust sidecar, no cloud. Registers Fennec as an agent card in JetBrains Air. IntelliJ Platform 263.x, Kotlin 2.4.21, 90 Rust tests, 50 Kotlin checks, MIT license.](docs/hero.png)
 
 Registers **Fennec** as an agent card in JetBrains Air, installs the native ACP launcher
-behind it, and adds a tool window for structural code search. Everything runs on this machine.
+behind it, and adds a compact tool window for access and model controls. Everything runs on this machine.
 
 ## At a glance
 
 | Rust unit tests | Rust integration tests | Kotlin checks | Plugin zip | Sidecar binary |
 |---|---|---|---|---|
-| 66 | 14 | 46 | 416 KiB | 652 KiB |
+| 74 | 16 | 50 | 446 KiB | 724 KiB |
 
-Test counts measured on 2026-11-24: 66 unit and 14 integration in `sidecar/`, which together are the 80 the lane measures, and 46 headless checks in `src/test/kotlin/`. Sizes from a local build of the
-working tree: `build/Fennec-plugin-1.0.0.zip` (426,074 B) and the packaged
-`fennec-acp.exe` (668,160 B). Nothing at 1.0.0 is published yet.
+Test counts measured on 2026-11-25: 74 unit and 16 integration in `sidecar/`, which together are the 90 the lane measures, and 50 headless checks in `src/test/kotlin/`. Sizes from a local build of the
+working tree: `build/Fennec-plugin-1.0.0.zip` (452,108 B) and the packaged
+`fennec-acp.exe` (740,864 B). The fixed 1.0.0 plugin is republished on 2026-11-25.
 
 ## Architecture
 
@@ -25,15 +25,17 @@ JetBrains Air ── ACP v1 over stdio ──► fennec-acp (Rust supervisor)
                                      local engine (default HTTP :8184)
 
 Fennec tool window ── NDJSON JSON-RPC (--rpc) ──► fennec-acp
-                                                   ├─ context/chunk   (pure Rust)
-                                                   └─ context/search  (cosine over embeddings :8182
-                                                         when it answers, BM25 over chunk text when not)
+                                                   ├─ controls/get
+                                                   └─ controls/set
+
+Air ACP stdio ───────────────────────────────────► fennec-acp
+                                                   └─ forwards ACP, applying the saved access mode
 ```
 
 | Layer | Owns |
 |---|---|
 | Kotlin | Air registration, Kotlin UI DSL settings panel, tool window; PSI in `readAction`, Swing on the EDT, sidecar streaming bridged with coroutine `Flow` |
-| Rust (`sidecar/`, self-contained crate) | the single `fennec-acp` binary: ACP launcher/supervisor **and** the `--rpc` context service (`context/chunk`, `context/search`) |
+| Rust (`sidecar/`, self-contained crate) | the single `fennec-acp` binary: ACP launcher/supervisor and the `--rpc` control service (`controls/get`, `controls/set`) |
 | fennec-core | ACP v1 itself (`acp.py` at the repo root); the sidecar owns no protocol code |
 
 > [!NOTE]
@@ -50,6 +52,8 @@ Fennec tool window ── NDJSON JSON-RPC (--rpc) ──► fennec-acp
 | Installed card | marks Fennec in Air's shared `installed.json` — a real card with install/enable/disable controls; the catalog carries a supported platform binary schema, while the installed overlay replaces it with the bundled local sidecar |
 | Legacy cleanup | removes the old `Colibri` entry from `~/.jetbrains/acp.json` only when it points at a managed launcher (sidecar or retired Python shim); other custom agents are never touched |
 | Engine lifecycle | starts on the first prompt, stops after idle; an already-running engine is attached to and left alone |
+| Access control | Ask every time forwards ACP permission requests to Air; Auto approve and Full access answer them in the sidecar with `allow_always` |
+| Model selection | lists local model folders and updates `model` in the shared config atomically, preserving unrelated keys and creating a backup |
 | Update check | hourly against this repo's GitHub releases, once per version per IDE run. It only announces: a plugin is replaced by the IDE's own installer, never by itself |
 
 The catalog entry includes Air's supported `distribution.binary.<platform>` shape so Air keeps
@@ -60,18 +64,18 @@ binary, registration is skipped with a warning.
 
 ## Tool window and settings
 
-The **Fennec** tool window (right anchor) indexes the open file into structural chunks
-(declarations and blocks with byte ranges and symbol names) and searches them; clicking a
-result navigates to the symbol. Settings under **Tools → Fennec**: an
-optional sidecar path override, the search result limit, whether the update check runs and on
-which channel, and a read-only view of the engine Python resolved from the shared config.
+The **Fennec** tool window (right anchor) is the control panel for the local agent:
 
-Scoring depends on whether an embedding endpoint answers. When one does, the chunk texts and the
-query are embedded and ranked by cosine; when it does not, the same documents are ranked by BM25
-over the stored text. Every reply carries the scorer as `mode` and the status line shows it.
-Nothing in the suite serves `/v1/embeddings` out of the box, so a fresh install searches
-lexically until `FENNEC_EMBED_URL` (default `http://127.0.0.1:8182`) points at an endpoint that
-does. A document the endpoint did not embed is never given a semantic score.
+- **Access:** Ask every time, Auto approve, or Full access. The choice is saved under
+  `~/.fennec/air/access.json`; Auto approve and Full access make the sidecar answer ACP
+  permission requests without forwarding them to the IDE.
+- **Model:** choose a discovered local model folder, enter a path, or select Default.
+  Apply writes `model` in `~/.fennec/config.json` (or `$FENNEC_CONFIG`) atomically and keeps
+  a `config.json.bak-fennec-controls` backup.
+
+Access changes apply to new permission requests immediately. Model changes apply the next
+time the engine starts. Settings under **Tools → Fennec** retain the optional sidecar path
+override, engine Python preview, update check, and channel selection.
 
 ## Browser / web-agent outlets (optional)
 
@@ -129,7 +133,8 @@ FENNEC_SIDECAR_TARGET=aarch64-unknown-linux-gnu  ./build-plugin.sh   # Linux ARM
 
 The sidecar reads the suite configuration (`~/.fennec/config.json` or `$FENNEC_CONFIG`, plus
 `FENNEC_*` variables) shared with the desktop app, CLI and installer: engine root, Python,
-model, engine URL, policy, backend and `ctx`. No fields are duplicated into the plugin.
+model, engine URL, policy, backend and `ctx`. The plugin's access mode is the only separate
+control file, `~/.fennec/air/access.json`, because ACP approval behavior belongs to the sidecar.
 
 | Override | Effect |
 |---|---|
@@ -145,9 +150,9 @@ model, engine URL, policy, backend and `ctx`. No fields are duplicated into the 
 
 | Suite | Count | Covers |
 |---|---|---|
-| Rust unit (`sidecar/`) | 66 | discovery search order, chunking, cosine index, embedding client, JSON-RPC dispatch |
-| Rust integration (`sidecar/tests/cli.rs`) | 14 | the built binary over stdio: flag forwarding, crash/exit-code propagation, EOF shutdown, and chunk/search against a loopback fake embedding service, so both the cosine and the BM25 scorer run |
-| Kotlin headless | 46 | SharedConfig contract and Air registration: registry merge, overlay, vmoptions, idempotency, legacy cleanup; the updater's version and release-payload decisions. Injected environments and temporary homes |
+| Rust unit (`sidecar/`) | 74 | discovery, atomic model config updates, access modes, permission replies, chunking, cosine index, embedding client, JSON-RPC dispatch |
+| Rust integration (`sidecar/tests/cli.rs`) | 16 | the built binary over stdio: flag forwarding, crash/exit-code propagation, EOF shutdown, control RPC round trips, automatic permission answers, and chunk/search against a loopback fake embedding service |
+| Kotlin headless | 50 | SharedConfig contract, control-state parsing, Air registration: registry merge, overlay, vmoptions, idempotency, legacy cleanup; the updater's version and release-payload decisions. Injected environments and temporary homes |
 
 No engine, no model, no real network, no IDE — and no paid API. The ACP protocol itself is
 tested in `fennec-core/tests`. The Kotlin UI compiles against the real platform but is not

@@ -14,9 +14,9 @@ was `0.3.0`. Dates are the tag publish dates.
 ## [1.0.0] - 2026-11-24
 Version 1.0.0 is the current release; the plugin, its Rust sidecar, and the packaged ZIP are versioned 1.0.0.
 Test counts come from the results hub
-(`benchmarks/artifacts/hub/RESULTS.json`, updated 2026-11-24T13:27:28Z): the
-`jetbrains-rust` lane reports **80 passed / 0 failed** for `cargo test --offline`
-in `sidecar/`, and the `jetbrains-kotlin` lane **46 passed / 0 failed** for
+(`benchmarks/artifacts/hub/RESULTS.json`, updated 2026-11-25T20:16:55Z): the
+`jetbrains-rust` lane reports **90 passed / 0 failed** for `cargo test --offline`
+in `sidecar/`, and the `jetbrains-kotlin` lane **50 passed / 0 failed** for
 `bash ./run-tests.sh`; `./run-tests.sh` runs both suites. Suite-wide totals live
 in that hub, not here.
 
@@ -28,8 +28,15 @@ in that hub, not here.
 - An update check against this repository's GitHub releases, off by default per
   version per IDE run, with an experimental channel that reports the trunk head.
   Tools → Fennec decides whether it runs and on which channel
+- A native control tool window with Ask every time, Auto approve, and Full access,
+  plus local model-folder selection. Access changes affect new ACP permission
+  requests immediately; model changes update the shared config atomically
 
 ### Changed
+- The structural file-index/search panel and its editor/log panes are removed; the
+  Fennec tool window now contains only agent access and model controls
+- The settings panel drops the obsolete search-result limit and keeps the sidecar
+  path, engine Python, update check, and channel controls
 - The packaged plugin directory and jar are named `fennec-jetbrains`, matching
   the repository (they were inherited as `fennec-desktop`)
 - `build-plugin.sh` resolves Kotlin from PATH or `FENNEC_KOTLINC`, detects the IDE
@@ -37,6 +44,12 @@ in that hub, not here.
   configured sidecar target
 
 ### Fixed
+- Auto approve and Full access now answer ACP permission requests in the sidecar
+  instead of leaving the control cosmetic; Ask every time still forwards every request
+- Model changes preserve unrelated shared-config keys, reject malformed JSON, validate
+  the selected folder, write atomically, and leave a backup
+- The 1.0.0 release was replaced on 2026-11-25 with this fixed plugin after the old
+  release asset and tag were backed up and removed
 - The version compare is numeric per component, so `1.10.0` no longer ranks
   below `1.9.0`, and a tag that only differs by a pre-release suffix is not an update
 - The check reports the release page instead of promising "restart your IDE to
@@ -57,14 +70,14 @@ in that hub, not here.
   so with nothing serving `/v1/embeddings` the panel searched nothing. It now
   falls back to BM25 over the local index, which is why the sidecar lane grew
   from the 74 `#[test]` attributes its last hub measurement counted at `9104cfb`
-  to the 80 that same command measures on the working tree today
+  to the 90 that same command measures on the working tree today
 - The results hub mis-marked this repo's Kotlin lane as blocked. `run_lane()` in
   the collector flagged any output containing the bare digits `4551` as a Smart App
   Control refusal, and cargo's own timing line — `finished in 4.551s`, which that
   run printed — carried them, so a healthy lane was recorded blocked instead of
   measured. The check now requires the real signature `os error 4551`
-  (`benchmarks/results.py:219`, working tree); the lane records **46 passed**,
-  carried forward from its measurement at 2026-11-23T21:26:54Z
+  (`benchmarks/results.py:219`, working tree); the lane records **50 passed**,
+  measured at 2026-11-25T20:16:55Z
 
 ## [0.9.0] - 2026-11-11
 
