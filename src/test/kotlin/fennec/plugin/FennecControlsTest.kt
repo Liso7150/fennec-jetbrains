@@ -6,20 +6,25 @@ object FennecControlsTest {
     fun run() {
         TestMain.check("control snapshot parses access, model, and local models") {
             val json = JsonParser.parseString(
-                """{"access":"auto","model":"/models/qwen","models_root":"/models","models":[{"name":"qwen","path":"/models/qwen"}]}""",
+                """{"access":"auto","model":"/models/qwen","reasoning_effort":"high","models_root":"/models","python":"/python","suite_root":"/suite","models":[{"name":"qwen","path":"/models/qwen","ready":true}]}""",
             ).asJsonObject
             val snapshot = FennecControlState.parse(json)
             TestMain.expectEquals("auto", snapshot.access, "access")
             TestMain.expectEquals("/models/qwen", snapshot.model, "model")
+            TestMain.expectEquals("high", snapshot.reasoningEffort, "reasoning effort")
             TestMain.expectEquals("/models", snapshot.modelsRoot, "models root")
+            TestMain.expectEquals("/python", snapshot.python, "python")
+            TestMain.expectEquals("/suite", snapshot.suiteRoot, "suite root")
             TestMain.expectEquals(1, snapshot.models.size, "model count")
             TestMain.expectEquals("qwen", snapshot.models[0].name, "model name")
+            TestMain.expect(snapshot.models[0].ready, "ready model")
         }
 
         TestMain.check("control snapshot defaults to safe access") {
             val snapshot = FennecControlState.parse(JsonParser.parseString("{}").asJsonObject)
             TestMain.expectEquals("ask", snapshot.access, "default access")
             TestMain.expectEquals("", snapshot.model, "default model")
+            TestMain.expectEquals("auto", snapshot.reasoningEffort, "default reasoning effort")
             TestMain.expect(snapshot.models.isEmpty(), "default models")
         }
 
@@ -27,6 +32,8 @@ object FennecControlsTest {
             val params = FennecControlState.params("full", "/models/edge0")
             TestMain.expectEquals("full", params.get("access").asString, "access param")
             TestMain.expectEquals("/models/edge0", params.get("model").asString, "model param")
+            val withReasoning = FennecControlState.params("full", "/models/edge0", "low")
+            TestMain.expectEquals("low", withReasoning.get("reasoning_effort").asString, "reasoning param")
         }
 
         TestMain.check("access labels match the desktop vocabulary") {

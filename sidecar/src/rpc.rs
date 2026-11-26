@@ -169,9 +169,10 @@ fn controls_set(params: &Value, state: &State) -> Result<Value, RpcError> {
     let access =
         AccessMode::parse(string_field(object, "access")?).map_err(RpcError::invalid_params)?;
     let model = optional_string(object, "model")?;
+    let reasoning_effort = optional_string(object, "reasoning_effort")?;
     state
         .controls
-        .set(access, model)
+        .set_with_reasoning(access, model, reasoning_effort)
         .map_err(RpcError::invalid_params)
 }
 
@@ -311,7 +312,7 @@ mod tests {
             "jsonrpc": "2.0",
             "id": 11,
             "method": "controls/set",
-            "params": { "access": "auto", "model": model }
+            "params": { "access": "auto", "model": model, "reasoning_effort": "medium" }
         });
         let reply = call(&request.to_string(), &mut s);
         assert!(reply.get("error").is_none(), "{reply}");
@@ -322,6 +323,7 @@ mod tests {
             &mut s,
         );
         assert_eq!(reply["result"]["access"], json!("auto"));
+        assert_eq!(reply["result"]["reasoning_effort"], json!("medium"));
         assert_eq!(reply["result"]["models"][0]["name"], json!("qwen"));
     }
 

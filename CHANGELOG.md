@@ -11,8 +11,36 @@ same commit as a published `v0.x` tag — except `v1.2.0`, which marks a
 pre-release commit that shipped inside `v0.3.0`. The first release here
 was `0.3.0`. Dates are the tag publish dates.
 
-## [1.0.0] - 2026-11-24
-Version 1.0.0 is the current release; the plugin, its Rust sidecar, and the packaged ZIP are versioned 1.0.0.
+## [1.0.0] - 2026-11-26
+
+This release replaces the 2026-11-24 build. Measured on the working tree: **91 Rust tests
+passed** (75 unit, 16 integration), **50 Kotlin checks passed**, and live IntelliJ smoke tests
+covered Access, ready-model selection, High reasoning persistence, and the recommended-model
+download/selection flow.
+
+### Added
+- Access, Model, and Reasoning buttons on Air's `Fennec [*]` composer line, styled with the
+  Fennec Desktop muted-chip, mode-color, border, and arrow vocabulary
+- Auto, Low, Medium, and High reasoning levels in the model menu, persisted as
+  `reasoning_effort` in the shared config and preserved by access/model changes
+- “Download new model…” in the model menu: a confirmed, cancellable background download of
+  `Liso/qwen36-35b-colibri` through `fennec-core/setup_wizard.py`, with resumable partial files,
+  progress, environment-only `HF_TOKEN` use, and automatic selection when complete
+
+### Changed
+- Composer controls live on the same line as Air's Fennec agent label instead of a separate
+  strip or the removed side tool window
+- Model changes preserve access and reasoning; access changes preserve model and reasoning
+
+### Fixed
+- Air's action groups registered Fennec actions but did not render them in this build; the
+  controls now install directly into the composer container
+- Composer dropdowns size to their content and remain usable in the live New Session window
+- The sidecar exposes its Python interpreter and suite root so the plugin can reuse core's
+  downloader without shelling out through a command interpreter
+
+## [1.0.0] - 2026-11-24 (superseded)
+This build was replaced by the 2026-11-26 release.
 Test counts come from the results hub
 (`benchmarks/artifacts/hub/RESULTS.json`, updated 2026-11-25T20:16:55Z): the
 `jetbrains-rust` lane reports **90 passed / 0 failed** for `cargo test --offline`
@@ -28,13 +56,13 @@ in that hub, not here.
 - An update check against this repository's GitHub releases, off by default per
   version per IDE run, with an experimental channel that reports the trunk head.
   Tools → Fennec decides whether it runs and on which channel
-- A native control tool window with Ask every time, Auto approve, and Full access,
-  plus local model-folder selection. Access changes affect new ACP permission
+- Native composer controls with Ask every time, Auto approve, and Full access,
+  plus engine-ready local model selection. Access changes affect new ACP permission
   requests immediately; model changes update the shared config atomically
 
 ### Changed
-- The structural file-index/search panel and its editor/log panes are removed; the
-  Fennec tool window now contains only agent access and model controls
+- The structural file-index/search panel and its editor/log panes are removed; Fennec's
+  Access and Model selectors now live directly in Air's New Session composer
 - The settings panel drops the obsolete search-result limit and keeps the sidecar
   path, engine Python, update check, and channel controls
 - The packaged plugin directory and jar are named `fennec-jetbrains`, matching
@@ -48,6 +76,9 @@ in that hub, not here.
   instead of leaving the control cosmetic; Ask every time still forwards every request
 - Model changes preserve unrelated shared-config keys, reject malformed JSON, validate
   the selected folder, write atomically, and leave a backup
+- The composer model selector now uses core's readiness classifier, lists only servable
+  checkpoints, normalizes Windows path separators, and refuses unconverted models such as
+  `edge0-35b-a3b` instead of letting the engine fail at prompt time
 - The 1.0.0 release was replaced on 2026-11-25 with this fixed plugin after the old
   release asset and tag were backed up and removed
 - The version compare is numeric per component, so `1.10.0` no longer ranks
@@ -57,13 +88,8 @@ in that hub, not here.
 - The experimental channel reads `main`, which is this repository's trunk
 - `"Fennec Updates"` is registered as a notification group, so a found update can
   actually be shown
-- The Fennec tool window is registered in `plugin.xml`. `FennecToolWindowFactory`
-  existed since `f05037b`, the README described the window and the code compiled —
-  but nothing in the Kotlin sources asks the platform to instantiate a factory,
-  only the descriptor does, so the window could not appear in the IDE at all.
-  Guarded headless by `src/test/kotlin/fennec/plugin/PluginDescriptorTest.kt`,
-  which compares descriptor entries against implementing classes in both
-  directions (working tree)
+- Composer action registration is guarded headlessly by `PluginDescriptorTest`, which
+  verifies both Fennec actions target Air's composer group and every registered class exists
 - Tool-window search no longer requires an embeddings service that this plugin
   never shipped: the sidecar used to fail the chunk/search RPC outright when
   `embed::embed` errored (`sidecar/src/rpc.rs`, removed `-32000` propagation),

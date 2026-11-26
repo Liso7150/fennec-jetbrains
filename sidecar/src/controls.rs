@@ -1,8 +1,10 @@
+use crate::discovery;
 use fennec_client::suite::{self, ConfigRead, Environ, Relative};
 use serde_json::{Map, Value, json};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const ACCESS_FILE: &str = "access.json";
@@ -42,17 +44,51 @@ impl AccessMode {
 pub struct Controls {
     pub home: PathBuf,
     pub config_path: PathBuf,
+    pub python: String,
+    pub suite_root: PathBuf,
 }
 
 impl Controls {
     pub fn new(environ: &Environ) -> Self {
         let home = suite::home_in(environ);
         let config_path = suite::config_file_in(environ, &home, Relative::Home);
-        Self { home, config_path }
+        let python = discovery::python_for_launcher(environ, &home).unwrap_or_else(|_| {
+            if cfg!(windows) {
+                "python".into()
+            } else {
+                "python3".into()
+            }
+        });
+        let suite_root = match suite::read_config(&config_path) {
+            ConfigRead::Object(map) => map
+                .get("suite_root")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| suite::expand_in(value, &home, Relative::Home))
+                .unwrap_or_else(|| home.join("Fennec-Suite")),
+            _ => home.join("Fennec-Suite"),
+        };
+        Self {
+            home,
+            config_path,
+            python,
+            suite_root,
+        }
     }
 
     pub fn at(home: PathBuf, config_path: PathBuf) -> Self {
-        Self { home, config_path }
+        let python = if cfg!(windows) {
+            "python".into()
+        } else {
+            "python3".into()
+        };
+        let suite_root = home.join("Fennec-Suite");
+        Self {
+            home,
+            config_path,
+            python,
+            suite_root,
+        }
     }
 
     pub fn access_path(&self) -> PathBuf {
@@ -74,6 +110,15 @@ impl Controls {
         suite::expand_in(value, &self.home, Relative::Home)
     }
 
+    fn path_string(path: &Path) -> String {
+        let value = path.to_string_lossy().into_owned();
+        if cfg!(windows) {
+            value.replace('/', "\\")
+        } else {
+            value
+        }
+    }
+
     pub fn models_root(&self) -> Result<PathBuf, String> {
         let value = self
             .config()?
@@ -86,16 +131,82 @@ impl Controls {
     }
 
     pub fn model(&self) -> Result<String, String> {
-        Ok(self
-            .config()?
+        let config = self.config()?;
+        let value = config
             .get("model")
             .and_then(Value::as_str)
             .unwrap_or("")
-            .to_string())
+            .trim();
+        if value.is_empty() {
+            return Ok(String::new());
+        }
+        let expanded = suite::expand_in(value, &self.home, Relative::Keep);
+        let path = if expanded.is_absolute() {
+            expanded
+        } else {
+            self.models_root()?.join(expanded)
+        };
+        Ok(Self::path_string(&path))
+    }
+
+    fn cache_root(&self) -> Result<PathBuf, String> {
+        let value = self
+            .config()?
+            .get("cache_root")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| ".cache/fennec".into());
+        Ok(self.resolve_config_path(&value))
+    }
+
+    fn core_models(&self, root: &Path) -> Option<Vec<Value>> {
+        let core = self.suite_root.join("fennec-core");
+        if !core.join("setup_wizard.py").is_file() {
+            return None;
+        }
+        let cache = self.cache_root().ok()?;
+        let code = "import json,sys; from setup_wizard import scan_models; print(json.dumps(scan_models(sys.argv[1], cache_root=sys.argv[2])))";
+        let output = Command::new(&self.python)
+            .current_dir(&core)
+            .arg("-c")
+            .arg(code)
+            .arg(root)
+            .arg(cache)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let rows: Vec<Value> = serde_json::from_slice(&output.stdout).ok()?;
+        Some(
+            rows.into_iter()
+                .filter_map(|row| {
+                    let name = row.get("name")?.as_str()?.to_string();
+                    let path = if cfg!(windows) {
+                        row.get("path")?.as_str()?.replace('/', "\\")
+                    } else {
+                        row.get("path")?.as_str()?.to_string()
+                    };
+                    let ready = row.get("ready")?.as_bool()?;
+                    let detail = row.get("detail")?.as_str().unwrap_or("").to_string();
+                    Some(json!({
+                        "name": name,
+                        "path": path,
+                        "ready": ready,
+                        "detail": detail,
+                        "classifier": "core",
+                    }))
+                })
+                .collect(),
+        )
     }
 
     pub fn models(&self) -> Result<Vec<Value>, String> {
         let root = self.models_root()?;
+        if let Some(models) = self.core_models(&root) {
+            return Ok(models);
+        }
         let mut models = Vec::new();
         let entries = match fs::read_dir(&root) {
             Ok(entries) => entries,
@@ -123,7 +234,13 @@ impl Controls {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().into_owned();
-            models.push(json!({ "name": name, "path": path.to_string_lossy() }));
+            models.push(json!({
+                "name": name,
+                "path": Self::path_string(&path),
+                "ready": false,
+                "detail": "core model classifier unavailable",
+                "classifier": "fallback",
+            }));
         }
         models.sort_by(|left, right| {
             left["name"]
@@ -154,13 +271,45 @@ impl Controls {
         Ok(json!({
             "access": self.access().as_str(),
             "model": self.model()?,
+            "reasoning_effort": self.reasoning_effort()?,
             "models_root": root.to_string_lossy(),
+            "python": self.python.clone(),
+            "suite_root": self.suite_root.to_string_lossy(),
             "models": self.models()?,
         }))
     }
 
+    pub fn reasoning_effort(&self) -> Result<String, String> {
+        let config = self.config()?;
+        let value = config
+            .get("reasoning_effort")
+            .and_then(Value::as_str)
+            .unwrap_or("auto");
+        match value {
+            "auto" | "low" | "medium" | "high" => Ok(value.to_string()),
+            _ => Err(format!("Unsupported reasoning effort: {value}")),
+        }
+    }
+
     pub fn set(&self, access: AccessMode, model: Option<&str>) -> Result<Value, String> {
+        self.set_with_reasoning(access, model, None)
+    }
+
+    pub fn set_with_reasoning(
+        &self,
+        access: AccessMode,
+        model: Option<&str>,
+        reasoning_effort: Option<&str>,
+    ) -> Result<Value, String> {
         let mut config = self.config()?;
+        if let Some(level) = reasoning_effort.map(str::trim).filter(|value| !value.is_empty()) {
+            match level {
+                "auto" | "low" | "medium" | "high" => {
+                    config.insert("reasoning_effort".into(), json!(level));
+                }
+                _ => return Err(format!("Unsupported reasoning effort: {level}")),
+            }
+        }
         match model.map(str::trim).filter(|value| !value.is_empty()) {
             Some(value) => {
                 let root = self.models_root()?;
@@ -173,7 +322,26 @@ impl Controls {
                 if !path.is_dir() {
                     return Err(format!("Model folder does not exist: {}", path.display()));
                 }
-                config.insert("model".into(), json!(path.to_string_lossy()));
+                if let Ok(models) = self.models() {
+                    if let Some(model) = models.iter().find(|model| {
+                        model.get("path").and_then(Value::as_str)
+                            == Some(Self::path_string(&path).as_str())
+                    }) {
+                        if model.get("classifier").and_then(Value::as_str) == Some("core")
+                            && model.get("ready").and_then(Value::as_bool) != Some(true)
+                        {
+                            let detail = model
+                                .get("detail")
+                                .and_then(Value::as_str)
+                                .unwrap_or("not servable yet");
+                            return Err(format!(
+                                "Model {} is not servable yet: {detail}",
+                                path.display()
+                            ));
+                        }
+                    }
+                }
+                config.insert("model".into(), json!(Self::path_string(&path)));
             }
             None => {
                 config.insert("model".into(), json!(""));
@@ -275,6 +443,26 @@ mod tests {
         assert_eq!(written["custom"], json!(7));
         assert!(config.with_file_name(CONFIG_BACKUP).is_file());
         assert_eq!(controls.access(), AccessMode::Auto);
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn reasoning_effort_round_trips_and_rejects_unknown_levels() {
+        let home = temp_dir("reasoning");
+        let config = home.join(".fennec").join("config.json");
+        fs::create_dir_all(config.parent().unwrap()).unwrap();
+        fs::write(&config, b"{\"backend\":\"vulkan\"}\n").unwrap();
+        let controls = Controls::at(home.clone(), config.clone());
+        let snapshot = controls
+            .set_with_reasoning(AccessMode::Ask, None, Some("high"))
+            .unwrap();
+        assert_eq!(snapshot["reasoning_effort"], json!("high"));
+        assert_eq!(controls.reasoning_effort().unwrap(), "high");
+        assert!(controls
+            .set_with_reasoning(AccessMode::Ask, None, Some("sideways"))
+            .is_err());
+        let written: Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+        assert_eq!(written["reasoning_effort"], json!("high"));
         fs::remove_dir_all(home).unwrap();
     }
 

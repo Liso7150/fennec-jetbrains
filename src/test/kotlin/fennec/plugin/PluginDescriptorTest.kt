@@ -7,15 +7,14 @@ import java.nio.file.Paths
 /**
  * Headless checks that the shipped descriptor and the source tree agree.
  *
- * The tool window regression this guards against is invisible to every other test here: a
- * factory class can compile, be named by the README and the plugin description, and still
- * never run, because nothing in the Kotlin sources asks the platform to instantiate it — only
- * plugin.xml does. So the two are compared directly, in both directions.
+ * Air has no third-party composer action rendering contract in this build, so Fennec installs its
+ * own compact composer bar. The descriptor must retain the Air dependency without registering
+ * invisible actions or the removed side tool window.
  */
 object PluginDescriptorTest {
 
     /** Interfaces whose implementations the platform can only reach through a descriptor entry. */
-    private val EXTENSION_INTERFACES = listOf("ToolWindowFactory", "Configurable", "ProjectActivity")
+    private val EXTENSION_INTERFACES = listOf("Configurable", "ProjectActivity")
 
     private fun repoRoot(): Path {
         var dir: Path? = Paths.get(System.getProperty("user.dir") ?: ".").toAbsolutePath()
@@ -31,9 +30,6 @@ object PluginDescriptorTest {
 
     private fun attr(tag: String, name: String): String? =
         Regex("""\b$name\s*=\s*"([^"]*)"""").find(tag)?.groupValues?.get(1)
-
-    private fun toolWindowTags(text: String): List<String> =
-        Regex("""<toolWindow\b[^>]*>""").findAll(text).map { it.value }.toList()
 
     /** True when a top-level class in this file lists `iface` among its supertypes. */
     private fun implementsInterface(source: String, iface: String): Boolean {
@@ -55,19 +51,28 @@ object PluginDescriptorTest {
             stream.filter { Files.isRegularFile(it) && it.toString().endsWith(".kt") }.toList()
         }
 
-        TestMain.check("descriptor registers the Fennec tool window") {
-            val tags = toolWindowTags(descriptor)
-            TestMain.expectEquals(1, tags.size, "toolWindow declarations")
-            TestMain.expectEquals("Fennec", attr(tags[0], "id"), "tool window id")
-            TestMain.expectEquals("right", attr(tags[0], "anchor"), "tool window anchor")
+        TestMain.check("descriptor keeps Air integration without invisible actions") {
+            TestMain.expect(
+                Regex("""<depends>com\.intellij\.air</depends>""").containsMatchIn(descriptor),
+                "missing Air module dependency",
+            )
+            TestMain.expect(!descriptor.contains("<actions>"), "obsolete composer actions are still registered")
+            TestMain.expect(!descriptor.contains("<toolWindow"), "removed side tool window is still registered")
         }
 
-        TestMain.check("tool window icon resolves inside resources") {
-            val tag = toolWindowTags(descriptor).firstOrNull() ?: return@check
-            val icon = attr(tag, "icon")
-            TestMain.expect(icon != null, "toolWindow declares no icon")
-            val file = root.resolve("src/main/resources").resolve(icon!!.trimStart('/'))
-            TestMain.expect(Files.isRegularFile(file), "missing icon ${file.fileName}")
+        TestMain.check("composer control bar is shipped") {
+            val bar = sourcesRoot.resolve("fennec/plugin/FennecComposerBar.kt")
+            TestMain.expect(Files.isRegularFile(bar), "missing Air composer control bar")
+            TestMain.expect(
+                Files.readString(bar).contains("EditorTextField") &&
+                    Files.readString(bar).contains("Describe the task for the agent"),
+                "composer control bar does not identify Air's prompt field",
+            )
+            TestMain.expect(
+                Files.readString(bar).contains("Download new model") &&
+                    Files.readString(bar).contains("reasoningLevels"),
+                "composer control bar is missing model download or reasoning levels",
+            )
         }
 
         TestMain.check("every extension-point implementation is registered") {
@@ -86,21 +91,28 @@ object PluginDescriptorTest {
         }
 
         TestMain.check("every registered class exists in the source tree") {
-            val refs = Regex("""\b(?:implementation|factoryClass)\s*=\s*"([^"]+)"""")
+            val refs = Regex("""\b(?:implementation|factoryClass|class)\s*=\s*"([^"]+)"""")
                 .findAll(descriptor).map { it.groupValues[1] }.toList()
             TestMain.expect(refs.isNotEmpty(), "no implementation references parsed")
             for (qualified in refs) {
+                val pkg = qualified.substringBeforeLast('.')
+                val cls = qualified.substringAfterLast('.')
                 val rel = qualified.replace('.', '/') + ".kt"
-                val file = sourcesRoot.resolve(rel)
-                TestMain.expect(Files.isRegularFile(file), "$qualified has no $rel")
+                var file = sourcesRoot.resolve(rel)
+                if (!Files.isRegularFile(file)) {
+                    file = sources.firstOrNull { candidate ->
+                        val text = Files.readString(candidate)
+                        declaredPackage(text) == pkg && Regex("""class\s+$cls\b""").containsMatchIn(text)
+                    } ?: throw AssertionError("$qualified has no source file")
+                }
                 val text = Files.readString(file)
                 TestMain.expect(
-                    declaredPackage(text) == qualified.substringBeforeLast('.'),
-                    "$rel does not declare package ${qualified.substringBeforeLast('.')}"
+                    declaredPackage(text) == pkg,
+                    "${file.fileName} does not declare package $pkg"
                 )
                 TestMain.expect(
-                    Regex("""class\s+${qualified.substringAfterLast('.')}""").containsMatchIn(text),
-                    "$rel has no class ${qualified.substringAfterLast('.')}"
+                    Regex("""class\s+$cls\b""").containsMatchIn(text),
+                    "${file.fileName} has no class $cls"
                 )
             }
         }

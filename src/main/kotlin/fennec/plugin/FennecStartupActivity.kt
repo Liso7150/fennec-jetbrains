@@ -12,5 +12,6 @@ class FennecStartupActivity : ProjectActivity {
             AirAgentRegistrar.registerOnce()
         }
         Updater.startBackgroundCheck()
+        FennecComposerBarInstaller.start(project)
     }
 }

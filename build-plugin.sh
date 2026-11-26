@@ -131,7 +131,7 @@ echo "packaged sidecar: $OSDIR/$name ($(wc -c < "$bin") bytes)"
 "$JAR" --create --file "$DIST/lib/fennec-jetbrains.jar" -C "$CLASSES" .
 VERSION="$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' "$HERE/src/main/resources/META-INF/plugin.xml" | head -n1)"
 ZIP="$OUT/Fennec-plugin-$VERSION.zip"
-( cd "$OUT" && "$JAR" --create --file "$ZIP" -C "$OUT" fennec-jetbrains )
+( cd "$OUT" && "$JAR" --create --no-manifest --file "$ZIP" -C "$OUT" fennec-jetbrains )
 
 echo "jar: $DIST/lib/fennec-jetbrains.jar ($(wc -c < "$DIST/lib/fennec-jetbrains.jar") bytes)"
 echo "zip: $ZIP ($(wc -c < "$ZIP") bytes)"
